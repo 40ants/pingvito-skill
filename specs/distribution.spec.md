@@ -92,8 +92,8 @@ None.
 ## § Test Plan
 
 - TC-1 → DR-1, DR-2: Actual APM installation into an isolated consumer; skill and helpers resolve.
-- TC-2 → DR-1, DR-2, DR-4: Follow manual install with an isolated skills directory and HOME
-  abstraction in tests; create settings without APM and call helpers against a local stub.
+- TC-2 → DR-1, DR-2, DR-4: Follow manual install with an isolated skills directory and
+  configuration path; create settings without APM and call helpers against a local stub.
 - TC-3 → DR-3, SEC-1: Initial setup and replacement preserve extra settings and mode 0600;
   malformed tokens or hosts leave the previous file unchanged.
 - TC-4 → DR-1, REL-1: Stub notification, question, answered/pending responses, and bad responses;
