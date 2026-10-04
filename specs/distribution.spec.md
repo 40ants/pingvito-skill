@@ -3,13 +3,13 @@ id: PINGVITO-SKILL-DIST-001
 type: use-case
 parent: PINGVITO-SKILL
 title: Install and configure the Pingvito skill
-status: ready
+status: implemented
 change_class: additive
 actors: [User, AI Assistant]
 emits: [Skill installed]
 consumes: [Personal service token]
 created: 2026-10-04
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 ## § Intent
@@ -106,4 +106,26 @@ None.
 ## § Implementation Notes
 
 Gate A passed: requirements and installation choices follow the user's explicit request;
-no blocking questions. Gate B/C require the actual package and isolated verification.
+no blocking questions. Gates B/C passed after implementation and verification.
+
+### Evidence — 2026-10-05
+
+- The old helper fails first-time setup with FileNotFoundError; the added
+  regression passes after setup creates private settings. All 10 unittest
+  tests pass on Python 3.9, including a real hidden-input PTY check, atomic
+  replacement failure cleanup, and a local HTTP stub. No MAX messages are sent by tests.
+- The skill-creator frontmatter validator passes. PyYAML was installed only in
+  a temporary uv environment for that development check; runtime stays stdlib-only.
+- APM 0.31.0 installs the local repository and the published GitHub repository
+  into separate temporary consumer projects. Both integrate one skill named
+  pingvito; all five runtime/metadata/asset files match the source byte-for-byte.
+- Manual folder copying and setup from the copied location pass with a temporary
+  configuration. The user-scope APM command also passes a read-only dry run.
+- The local ~/.codex/skills/pingvito symlink resolves to this repository's
+  .apm/skills/pingvito. The old max-notifier folder is outside skill discovery,
+  with a temporary code-only backup. Personal configuration remains outside Git
+  at mode 0600; its previous token is preserved and host is now the public API.
+- A live read-only get-response returns pending (exit 2), confirming the
+  existing personal token works with the deployed service without sending a test message.
+- Initial implementation and tests are published to main; final validation is
+  recorded in this atom. Repository visibility remains private.

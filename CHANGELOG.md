@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — 2026-10-04
+## 0.1.0 — 2026-10-05
 
 - Extracted and renamed `max-notifier` to the portable `pingvito` skill.
 - Added an APM manifest and manual installation instructions.

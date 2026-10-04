@@ -3,13 +3,13 @@ id: PINGVITO-SKILL
 type: system
 parent: null
 title: Pingvito assistant skill
-status: ready
+status: implemented
 change_class: additive
 actors: [User, AI Assistant]
 emits: [Notification delivered, Question answered]
 consumes: [Task completed, User decision needed]
 created: 2026-10-04
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 ## § Intent
@@ -66,3 +66,5 @@ See the distribution atom for isolated transport, configuration, and installatio
 ## § Implementation Notes
 
 Runtime behavior is inherited from the existing max-notifier skill.
+The distribution atom verifies setup, notification/question transport, pending
+responses, and private diagnostics. Local and GitHub APM installation are validated.
