@@ -1,0 +1,6 @@
+name: pingvito-skill
+version: 0.1.0
+description: MAX notifications and interactive questions for AI assistants
+author: 40ants
+dependencies:
+  apm: []
