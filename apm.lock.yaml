@@ -18,7 +18,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:a4ed8845750d9c40cb2ecf3d631271f733ba8b27379c73aef74ff3bcf52b8030
+  content_hash: sha256:b7376093646330fd5a6d16b40dc46d2e0143958485b70070255edcb027613a80
 - kind: project-relative
   target: legacy
   value: .agents/skills/pingvito/agents/openai.yaml
@@ -45,7 +45,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:13e63d3b16e21dfaa326d8685e463dc16a96e7a3f5b5febd0671643906753da2
+  content_hash: sha256:5406252765e4bbbda93dab6a8bd3e5c88e25027bb63542c67865599662f5bcfc
 - kind: project-relative
   target: legacy
   value: .agents/skills/pingvito/scripts/notify.py
@@ -54,7 +54,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:496568684d366b291c5fd48d97093c9e066474da75900386d4cb6c33d9c0fcc3
+  content_hash: sha256:1e7d06711772a6055e0825e28a98276bddfbbbb7431dc0e0662ea1dcdc24c576
 local_deployed_files:
 - .agents/skills/pingvito
 - .agents/skills/pingvito/SKILL.md
@@ -63,8 +63,8 @@ local_deployed_files:
 - .agents/skills/pingvito/scripts/configure.py
 - .agents/skills/pingvito/scripts/notify.py
 local_deployed_file_hashes:
-  .agents/skills/pingvito/SKILL.md: sha256:a4ed8845750d9c40cb2ecf3d631271f733ba8b27379c73aef74ff3bcf52b8030
+  .agents/skills/pingvito/SKILL.md: sha256:b7376093646330fd5a6d16b40dc46d2e0143958485b70070255edcb027613a80
   .agents/skills/pingvito/agents/openai.yaml: sha256:291fc4d3454041473146c354f9c64f2cbb90d135caf957e127cec1c4797d89aa
   .agents/skills/pingvito/assets/avatar.png: sha256:97e8bd02bfe9fe49796984b9f90248cf72063d8cc7fe65b537f974f019ecd64b
-  .agents/skills/pingvito/scripts/configure.py: sha256:13e63d3b16e21dfaa326d8685e463dc16a96e7a3f5b5febd0671643906753da2
-  .agents/skills/pingvito/scripts/notify.py: sha256:496568684d366b291c5fd48d97093c9e066474da75900386d4cb6c33d9c0fcc3
+  .agents/skills/pingvito/scripts/configure.py: sha256:5406252765e4bbbda93dab6a8bd3e5c88e25027bb63542c67865599662f5bcfc
+  .agents/skills/pingvito/scripts/notify.py: sha256:1e7d06711772a6055e0825e28a98276bddfbbbb7431dc0e0662ea1dcdc24c576

@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-CONFIG_PATH = Path.home() / ".config" / "ai-notifier" / "config.json"
+CONFIG_PATH = Path.home() / ".config" / "pingvito" / "config.json"
 TIMEOUT_SECONDS = 10
 
 

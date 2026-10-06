@@ -14,7 +14,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 
-CONFIG_PATH = Path.home() / ".config" / "ai-notifier" / "config.json"
+CONFIG_PATH = Path.home() / ".config" / "pingvito" / "config.json"
 DEFAULT_HOST = "https://pingvito.ru/api"
 
 

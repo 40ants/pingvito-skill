@@ -25,8 +25,8 @@ python3 "$SKILL_DIR/scripts/configure.py" --host https://pingvito.ru/api
 Enter the token at its hidden prompt. If the user supplied a token in chat, use
 the tool's terminal-input facility after the hidden prompt appears. Never put it
 in a shell command, command-line argument, output, or a repository file.
-The helper creates or atomically updates `~/.config/ai-notifier/config.json`
-with mode `0600`. The legacy path preserves settings from `max-notifier`.
+The helper creates or atomically updates `~/.config/pingvito/config.json`
+with mode `0600`.
 An empty prompt response preserves an existing token; `--host` selects the
 service URL. Without it, existing settings are preserved, or first setup uses
 `https://pingvito.ru/api`.

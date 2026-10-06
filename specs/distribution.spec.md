@@ -9,7 +9,7 @@ actors: [User, AI Assistant]
 emits: [Skill installed]
 consumes: [Personal service token]
 created: 2026-10-04
-updated: 2026-10-05
+updated: 2026-10-06
 ---
 
 ## § Intent
@@ -23,7 +23,7 @@ the User's messenger, with or without a package manager.
 - DR-2: Runtime resources are resolved from the installed skill location.
 - DR-3: Setup stores a personal credential privately and preserves existing extra settings.
 - DR-4: Documentation identifies the bot visually, links to it, and explains first setup.
-- DR-5: Relocation replaces the old local skill with the renamed skill without losing settings.
+- DR-5: Reinstalling or relocating the skill preserves settings in the personal configuration file.
 
 ## § Acceptance Criteria
 
@@ -41,8 +41,8 @@ Scenario: Set up without a package manager (→ DR-1, DR-2, DR-4)
     And the skill is usable from its installed location
 
 Scenario: Preserve configuration (→ DR-3, DR-5)
-  Given the User already has valid settings for max-notifier
-  When the renamed skill is installed and configured
+  Given the User already has valid settings in ~/.config/pingvito/config.json
+  When the skill is reinstalled and configured
   Then the credential and additional settings remain available
     And the credential is not exposed by the setup operation
 
@@ -61,7 +61,7 @@ Skill package, installation location, and personal settings; server behavior is 
 - SEC-1: The configuration has mode 0600 and is replaced atomically; Git contains no credential.
 - PORT-1: Runtime uses Python 3.9+ standard library only, with no APM runtime dependency.
 - REL-1: Helpers preserve request timeouts and the pending-response exit code 2.
-- COMPAT-1: Keep the existing ~/.config/ai-notifier/config.json settings path.
+- CONFIG-1: Store personal settings in ~/.config/pingvito/config.json.
 
 ## § Open Questions
 
@@ -71,7 +71,8 @@ None.
 
 - DL-1 (2026-10-04): Repository is ~/projects/lisp/pingvito-skill, remote 40ants/pingvito-skill.
 - DL-2 (2026-10-04): Use apm.yml and .apm/skills/pingvito; manual installation copies that folder.
-- DL-3 (2026-10-04): Keep the legacy configuration path; use https://pingvito.ru/api for first setup.
+- DL-3 (2026-10-06): Store settings in ~/.config/pingvito/config.json; use
+  https://pingvito.ru/api for first setup.
 - DL-4 (2026-10-04): Adapt the existing token helper to create first-time settings and optionally
   change host. A blank hidden input preserves an existing token; no token command option exists.
 - DL-5 (2026-10-04): Bot link is https://max.ru/se14366206_bot; reuse the approved geometric avatar.
