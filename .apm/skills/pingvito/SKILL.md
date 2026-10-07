@@ -1,6 +1,6 @@
 ---
 name: pingvito
-description: Send a concise MAX completion notification after an assistant operation lasting five minutes or more, or ask the user a MAX button-choice question and read their answer through Pingvito.
+description: Send a concise MAX completion notification after an assistant operation lasting five minutes or more, or ask the user a MAX button-choice question and read their answer through Pingvito. Questions must also go through MAX when more than five minutes have elapsed since autonomous work began.
 ---
 
 # Pingvito
@@ -72,6 +72,11 @@ chatter, reasoning, and secrets. If sending fails, do not retry automatically or
 let it prevent the final response; mention the failure when relevant.
 
 ## Ask the user to choose
+
+If more than five minutes have elapsed since the start of autonomous work on
+the current task, send questions requiring a choice through MAX using Pingvito.
+Measure this from the start of autonomous work, not from the last message or
+notification. Do not leave such a question only in the assistant chat.
 
 When a decision is needed and answers form a finite list, send a button question:
 
