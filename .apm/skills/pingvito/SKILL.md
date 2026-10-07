@@ -14,9 +14,30 @@ instead of assuming the current working directory or a particular user's home.
 
 ## First setup and token renewal
 
-If settings are missing, direct the user to the bot, ask them to start it, and
-request `/token`. This is the personal Pingvito token, not a MAX Bot API token.
-Run the setup helper in an interactive terminal:
+If settings or the token are missing, or the service rejects the token as
+unknown or revoked, explain the error and give the user the complete setup
+instructions in the same response: open the bot, start it, send `/token`, then
+run the setup helper in their interactive terminal. This is the personal
+Pingvito token, not a MAX Bot API token.
+
+Always show a copyable shell command with the actual absolute path to
+`scripts/configure.py` in the loaded skill directory, quoted for the shell.
+Resolve `SKILL_DIR` yourself before showing it: do not leave `$SKILL_DIR`,
+relative paths, or other undefined placeholders in the user's command.
+For example, if the loaded skill is at
+`/Users/art/.agents/skills/pingvito/SKILL.md`, show:
+
+```sh
+python3 "/Users/art/.agents/skills/pingvito/scripts/configure.py" --host https://pingvito.ru/api
+```
+
+Tell the user to paste the token issued by `/token` into the hidden
+`Pingvito token:` prompt and press Enter; the token will not be displayed.
+Do not stop at saying the config is missing or telling them to obtain a token.
+For a configured custom service, preserve its host when renewing the token
+by omitting `--host`.
+
+When performing setup through a terminal tool, use:
 
 ```sh
 python3 "$SKILL_DIR/scripts/configure.py" --host https://pingvito.ru/api
