@@ -44,6 +44,14 @@
   (zerop (nth-value 2 (run-command (list "kill" "-0" (princ-to-string pid))
                                    :allow-failure t :timeout 10))))
 
+(defun mock-process-count (project)
+  "Count live processes whose command line references PROJECT."
+  (let ((output (nth-value 0 (run-command
+                              (list "pgrep" "-f" (namestring project))
+                              :allow-failure t :timeout 10))))
+    (length (remove "" (uiop:split-string output :separator '(#\Newline))
+                    :test #'string=))))
+
 (defun file-mode (path)
   "Return the permission bits of PATH as an octal string like 0o600."
   (string-trim '(#\Space #\Newline #\Return)
@@ -119,7 +127,7 @@
           (stop-mock (field descriptor "pid")))
         (remove-directory workspace)))))
 
-(deftest prepare-twice-refreshes-fixture
+(deftest prepare-twice-reuses-the-same-mock
   (with-fixture-project (project)
     (let ((workspace (temporary-directory "pingvito-workspace"))
           (vars (dict "environmentProfile" "pingvito"))
@@ -128,13 +136,20 @@
       (unwind-protect
            (progn
              (setf first-descriptor (prepare workspace vars))
+             ;; The framework prepares every variant up front; the second
+             ;; same-mode prepare must reuse the running mock exactly.
              (setf second-descriptor (prepare workspace vars))
-             (ok (/= (field first-descriptor "port")
-                     (field second-descriptor "port")))
-             (ok (not (equal (field first-descriptor "token")
-                             (field second-descriptor "token"))))
-             (ok (not (json-equal-p first-descriptor second-descriptor)))
-             ;; The config now advertises the second mock.
+             (ok (= (field first-descriptor "pid")
+                    (field second-descriptor "pid")))
+             (ok (= (field first-descriptor "port")
+                    (field second-descriptor "port")))
+             (ok (equal (field first-descriptor "token")
+                        (field second-descriptor "token")))
+             (ok (json-equal-p first-descriptor second-descriptor))
+             (ok (pid-alive-p (field second-descriptor "pid")))
+             ;; Exactly one mock process serves the whole fixture home.
+             (ok (= 1 (mock-process-count project)))
+             ;; The config still advertises the same mock and token.
              (let ((config (read-json (at (fixture-home) ".config/pingvito/config.json"))))
                (ok (equal (format nil "http://127.0.0.1:~A/api"
                                   (field second-descriptor "port"))
@@ -142,8 +157,30 @@
                (ok (equal (field second-descriptor "token") (field config "token")))))
         (when first-descriptor
           (stop-mock (field first-descriptor "pid")))
-        (when second-descriptor
-          (stop-mock (field second-descriptor "pid")))
+        (remove-directory workspace)))))
+
+(deftest mixed-fail-notify-modes-are-rejected
+  (with-fixture-project (project)
+    (let* ((workspace (temporary-directory "pingvito-workspace"))
+           (vars (dict "environmentProfile" "pingvito"))
+           (holdout-vars (dict "environmentProfile" "pingvito"
+                               "failNotify" 'yason:true))
+           (descriptor (prepare workspace vars))
+           (message nil))
+      (unwind-protect
+           (progn
+             ;; A live normal mock cannot serve the holdout case too.
+             (handler-case (prepare workspace holdout-vars)
+               (error (condition)
+                 (setf message (princ-to-string condition))))
+             (ok message)
+             (ok (search "Mixed fail-notify modes" message :test #'char=))
+             (ok (search "unsupported" message :test #'char=))
+             (ok (search "--filter" message :test #'char=))
+             ;; The running mock survives the rejected prepare.
+             (ok (pid-alive-p (field descriptor "pid"))))
+        (when (and descriptor (pid-alive-p (field descriptor "pid")))
+          (stop-mock (field descriptor "pid")))
         (remove-directory workspace)))))
 
 (deftest live-lock-blocks-and-stale-lock-is-reclaimed
@@ -154,11 +191,13 @@
            (descriptor nil))
       (unwind-protect
            (progn
-             ;; A live foreign pid owns the fixture home.
+             ;; A live foreign pid owns the fixture home: both the sweep
+             ;; and a prepare refuse to touch it.
              (write-lock (uiop:process-info-pid sitter))
              (ok (signals (preflight "pingvito" :check-tools nil) 'error))
              (ok (signals (prepare workspace vars) 'error))
-             ;; Once that process dies the stale lock is reclaimed.
+             ;; Once that process dies the stale lock is reclaimed and a
+             ;; prepare proceeds normally.
              (uiop:terminate-process sitter :urgent t)
              (uiop:wait-process sitter)
              (setf descriptor (prepare workspace vars))
@@ -169,6 +208,38 @@
         (when (uiop:process-alive-p sitter)
           (uiop:terminate-process sitter :urgent t)
           (uiop:wait-process sitter))
+        (remove-directory workspace)))))
+
+(deftest preflight-sweeps-leftovers-for-a-fresh-run
+  (with-fixture-project (project)
+    (let* ((workspace (temporary-directory "pingvito-workspace"))
+           (vars (dict "environmentProfile" "pingvito"))
+           (first-descriptor (prepare workspace vars))
+           (second-descriptor nil))
+      (unwind-protect
+           (progn
+             ;; The sweep terminates the recorded mock and deletes every
+             ;; piece of fixture-home state left by an earlier run.
+             (preflight "pingvito" :check-tools nil)
+             (ng (pid-alive-p (field first-descriptor "pid")))
+             (ng (probe-file (at (fixture-home) ".config/pingvito/config.json")))
+             (ng (probe-file (at (fixture-home) "mock-state.json")))
+             (ng (probe-file (at (fixture-home) "log-offset")))
+             (ng (probe-file (at (fixture-home) "logs/mock-requests.jsonl")))
+             ;; The next run starts a brand-new mock on clean state.
+             (setf second-descriptor (prepare workspace vars))
+             (ok (/= (field first-descriptor "pid")
+                     (field second-descriptor "pid")))
+             (ok (= 1 (mock-process-count project)))
+             (ok (string= "0"
+                          (string-trim '(#\Space #\Newline #\Return)
+                                       (uiop:read-file-string
+                                        (at (fixture-home) "log-offset")
+                                        :external-format :utf-8)))))
+        (when (and second-descriptor (pid-alive-p (field second-descriptor "pid")))
+          (stop-mock (field second-descriptor "pid")))
+        (when (and first-descriptor (pid-alive-p (field first-descriptor "pid")))
+          (stop-mock (field first-descriptor "pid")))
         (remove-directory workspace)))))
 
 (deftest static-callbacks-match-the-contract
@@ -263,32 +334,57 @@
           (stop-mock (field descriptor "pid")))
         (remove-directory workspace)))))
 
-(deftest finalize-archives-evidence-and-stops-the-mock
+(deftest finalize-archives-request-deltas-and-keeps-the-mock
   (with-fixture-project (project)
     (let* ((workspace (temporary-directory "pingvito-workspace"))
            (vars (dict "environmentProfile" "pingvito"))
-           (archive (temporary-directory "pingvito-archive"))
+           (first-archive (temporary-directory "pingvito-archive-1"))
+           (second-archive (temporary-directory "pingvito-archive-2"))
            (descriptor (prepare workspace vars))
-           (result nil))
+           (first-result nil)
+           (second-result nil))
       (unwind-protect
            (progn
+             ;; Two requests arrive during the first sample's window.
              (ok (= 200 (post-json (field descriptor "port") "/notify" "{\"message\":\"done\"}")))
              (ok (= 200 (post-json (field descriptor "port") "/ask" "{\"question\":\"ok\"}")))
-             (setf result (finalize workspace :vars vars :archive-directory archive))
-             (ok (true-p (field result "ok")))
-             (ok (= 2 (field result "requests")))
-             ;; The archived log carries both requests.
-             (ok (= 2 (length (log-entries (namestring (at archive "requests.jsonl"))))))
-             ;; The archived descriptor keeps the full fixture description.
-             (let ((archived (read-json (at archive "fixture.json"))))
+             (setf first-result (finalize workspace :vars vars
+                                                :archive-directory first-archive))
+             (ok (true-p (field first-result "ok")))
+             (ok (= 2 (field first-result "requests")))
+             (ok (= 2 (length (log-entries (namestring (at first-archive "requests.jsonl"))))))
+             ;; The archived fixture keeps the full description plus the
+             ;; archived offset range of this sample.
+             (let ((archived (read-json (at first-archive "fixture.json"))))
                (ok (equal (field descriptor "token") (field archived "token")))
-               (ok (= (field descriptor "pid") (field archived "pid"))))
-             (ng (pid-alive-p (field descriptor "pid")))
-             (ng (probe-file (lock-path))))
+               (ok (= (field descriptor "pid") (field archived "pid")))
+               (ok (equal (field descriptor "fixtureHome") (field archived "fixtureHome")))
+               (ok (equal (format nil "http://127.0.0.1:~A/api" (field descriptor "port"))
+                          (field archived "host")))
+               (ok (= 0 (field archived "offsetStart")))
+               (ok (= 2 (field archived "offsetEnd"))))
+             ;; The mock survives the sample: one more request arrives in
+             ;; the second sample's window and only it is archived.
+             (ok (pid-alive-p (field descriptor "pid")))
+             (ok (= 200 (post-json (field descriptor "port") "/notify" "{\"message\":\"again\"}")))
+             (setf second-result (finalize workspace :vars vars
+                                                 :archive-directory second-archive))
+             (ok (true-p (field second-result "ok")))
+             (ok (= 1 (field second-result "requests")))
+             (let ((entries (log-entries (namestring (at second-archive "requests.jsonl")))))
+               (ok (= 1 (length entries)))
+               (ok (equal "/notify" (field (first entries) "endpoint"))))
+             (let ((archived (read-json (at second-archive "fixture.json"))))
+               (ok (= 2 (field archived "offsetStart")))
+               (ok (= 3 (field archived "offsetEnd"))))
+             ;; The mock and the run lock both outlive every sample.
+             (ok (pid-alive-p (field descriptor "pid")))
+             (ok (probe-file (lock-path))))
         (when (and descriptor (pid-alive-p (field descriptor "pid")))
           (stop-mock (field descriptor "pid")))
         (remove-directory workspace)
-        (remove-directory archive)))))
+        (remove-directory first-archive)
+        (remove-directory second-archive)))))
 
 (deftest fail-notify-mode-rejects-notify
   (with-fixture-project (project)
