@@ -178,7 +178,7 @@
     ;; Codex inherits a HOME pointing at the fixture home.
     (let ((config (codex-config (dict "profile" "pingvito"
                                       "fixtureHome" "/tmp/pingvito-home/"))))
-      (ok (= 1 (hash-table-count config)))
+      (ok (= 3 (hash-table-count config)))
       (ok (equal "/tmp/pingvito-home/"
                  (gethash "shell_environment_policy.set.HOME" config))))))
 
@@ -186,18 +186,22 @@
   (with-fixture-project (project)
     ;; Without projectRoot the HOME keeps the util:root fallback.
     (let ((config (codex-config (dict "profile" "pingvito"))))
-      (ok (= 1 (hash-table-count config)))
+      (ok (= 3 (hash-table-count config)))
       (ok (equal (namestring (fixture-home))
-                 (gethash "shell_environment_policy.set.HOME" config))))
+                 (gethash "shell_environment_policy.set.HOME" config)))
+      (ok (eq 'yason:true (gethash "network_access_enabled" config)))
+      (ok (equal "1" (gethash "shell_environment_policy.set.PYTHONDONTWRITEBYTECODE" config))))
     ;; The runner tags the preflight descriptor with the run's archived
     ;; project copy; HOME must follow that root, not the live checkout.
     (let ((run-project (temporary-directory "pingvito-run-project")))
       (unwind-protect
            (let ((config (codex-config (dict "profile" "pingvito"
                                              "projectRoot" (namestring run-project)))))
-             (ok (= 1 (hash-table-count config)))
+             (ok (= 3 (hash-table-count config)))
              (ok (equal (namestring (at run-project ".eval-cache/fixture-home/"))
-                        (gethash "shell_environment_policy.set.HOME" config))))
+                        (gethash "shell_environment_policy.set.HOME" config)))
+             (ok (eq 'yason:true (gethash "network_access_enabled" config)))
+             (ok (equal "1" (gethash "shell_environment_policy.set.PYTHONDONTWRITEBYTECODE" config))))
         (remove-directory run-project)))))
 
 (deftest finalize-archives-evidence-and-stops-the-mock

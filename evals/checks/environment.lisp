@@ -127,12 +127,18 @@ CODEX-CONFIG redirect it to the run's archived project copy."
 
 The runner tags the descriptor with the run's archived project copy in
 PROJECT-ROOT; HOME must follow it, because that is where PREPARE (running
-under SKILL_EVAL_PROJECT_ROOT) writes the mock's config."
+under SKILL_EVAL_PROJECT_ROOT) writes the mock's config. The runner also
+pops NETWORK-ACCESS-ENABLED into provider settings so the sandboxed shell
+may call the mock over loopback (pinned to 127.0.0.1 by the config file),
+and the shell exports PYTHONDONTWRITEBYTECODE so incidental __pycache__
+does not pollute workspace manifests."
   (let ((project-root (field descriptor "projectRoot")))
     (dict "shell_environment_policy.set.HOME"
           (or (field descriptor "fixtureHome")
               (namestring (fixture-home (when project-root
-                                          (pathname project-root))))))))
+                                          (pathname project-root)))))
+          "shell_environment_policy.set.PYTHONDONTWRITEBYTECODE" "1"
+          "network_access_enabled" (bool t))))
 
 (-> opencode-config (t) hash-table)
 (defun opencode-config (descriptor)
