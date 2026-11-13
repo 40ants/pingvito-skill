@@ -53,6 +53,11 @@ CODEX-CONFIG redirect it to the run's archived project copy."
 (defun mock-ready-path ()
   (at (fixture-home) "mock-ready.json"))
 
+(-> archives-file (pathname) pathname)
+(defun archives-file (home)
+  "Per-workspace memory of already archived log windows."
+  (at home "archives.json"))
+
 (-> config-path () pathname)
 (defun config-path ()
   "Fake Pingvito configuration seen by the agent's HOME."
@@ -157,6 +162,8 @@ exec /bin/zsh \"$@\"~%"
     ;; A dead previous mock may leave its log behind; deltas start clean.
     (when (probe-file log-path) (delete-file log-path))
     (when (probe-file ready-path) (delete-file ready-path))
+    (when (probe-file (archives-file (fixture-home)))
+      (delete-file (archives-file (fixture-home))))
     (unwind-protect
          (progn
            (setf mock (start-mock :log-path log-path :ready-path ready-path
@@ -244,7 +251,8 @@ exec /bin/zsh \"$@\"~%"
                         (at (fixture-home) ".config/")))
       (when (uiop:directory-exists-p path)
         (remove-directory path)))
-    (dolist (file (append (list (state-path) (offset-path (fixture-home)))
+    (dolist (file (append (list (state-path) (offset-path (fixture-home))
+                                (archives-file (fixture-home)))
                           (uiop:directory* (at (fixture-home) "*-ready.json"))))
       (when (probe-file file) (delete-file file))))
   t)
@@ -316,6 +324,29 @@ starts."
               :test #'string=)
       nil))
 
+(-> workspace-key ((or pathname string)) string)
+(defun workspace-key (workspace)
+  "Stable filename-safe key identifying one sample workspace.
+
+The OpenCode provider finalizes the same workspace twice — recovery
+captures evidence when the session ends, then the collector archives the
+graded sample — so a workspace must keep its window across finalizes."
+  (let ((path (or (ignore-errors (namestring (truename workspace)))
+                  (namestring workspace))))
+    (coerce (loop for char across path
+                  when (or (alphanumericp char)
+                           (member char '(#\- #\_ #\.) :test #'char=))
+                    collect char)
+            'string)))
+
+(-> read-archives (pathname) hash-table)
+(defun read-archives (home)
+  "Decode the archived-window memory, tolerating a corrupt or absent file."
+  (let ((file (archives-file home)))
+    (or (and (probe-file file)
+             (handler-case (read-json file) (error () nil)))
+        (dict))))
+
 (-> read-offset (pathname) integer)
 (defun read-offset (home)
   "Number of mock log lines already archived to earlier samples."
@@ -331,9 +362,12 @@ starts."
 (defun finalize (workspace &key vars archive-directory)
   "Archive the mock requests made since the previous sample.
 
-  The mock keeps serving the rest of the run: only the log lines beyond
-  the shared offset are copied into the sample's archive, the offset
-  advances, and the mock, its state and the lock all stay alive."
+  The mock keeps serving the rest of the run: each workspace archives the
+  log lines beyond the shared offset exactly once, and a repeated
+  finalize of the same workspace — the OpenCode provider's evidence
+  capture followed by the graded sample's archive — re-emits the same
+  window without consuming it twice. The mock, its state and the lock
+  all stay alive."
   (declare (ignore vars))
   (let* ((descriptor-file (at workspace ".eval-fixture.json"))
          (descriptor (when (probe-file descriptor-file) (read-json descriptor-file))))
@@ -341,10 +375,23 @@ starts."
         (dict "ok" (bool nil) "requests" 0)
         (let* ((home (pathname (field descriptor "fixtureHome")))
                (log-path (pathname (field descriptor "logPath")))
-               (start (read-offset home))
                (lines (log-lines log-path))
-               (delta (nthcdr start lines))
-               (end (length lines)))
+               (total (length lines))
+               (key (workspace-key workspace))
+               (archives (read-archives home))
+               (window (gethash key archives))
+               (fresh-p (null window))
+               ;; A brand-new window spans the lines added since the last
+               ;; sample; a remembered window is replayed unchanged.
+               (start (if window (field window "start") (read-offset home)))
+               (end (if window (field window "end") total))
+               (from (min start total))
+               (to (min (max end from) total))
+               (delta (subseq lines from to)))
+          (when fresh-p
+            (setf (gethash key archives) (dict "start" from "end" to))
+            (write-json (archives-file home) archives)
+            (write-text (offset-path home) (format nil "~D~%" to)))
           (when archive-directory
             (write-text (at archive-directory "requests.jsonl")
                         (if delta (format nil "~{~A~^~%~}~%" delta) ""))
@@ -358,9 +405,8 @@ starts."
                               "token" (field descriptor "token")
                               "failNotify" (bool (true-p (field descriptor "failNotify")))
                               "logPath" (namestring log-path)
-                              "offsetStart" start
-                              "offsetEnd" end))
-            (write-text (offset-path home) (format nil "~D~%" end)))
+                              "offsetStart" from
+                              "offsetEnd" to)))
           (dict "ok" (bool t) "requests" (length delta))))))
 
 (register-environment "pingvito"

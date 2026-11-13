@@ -336,26 +336,38 @@
 
 (deftest finalize-archives-request-deltas-and-keeps-the-mock
   (with-fixture-project (project)
-    (let* ((workspace (temporary-directory "pingvito-workspace"))
+    (let* ((workspace-1 (temporary-directory "pingvito-workspace-1"))
+           (workspace-2 (temporary-directory "pingvito-workspace-2"))
            (vars (dict "environmentProfile" "pingvito"))
-           (first-archive (temporary-directory "pingvito-archive-1"))
-           (second-archive (temporary-directory "pingvito-archive-2"))
-           (descriptor (prepare workspace vars))
-           (first-result nil)
-           (second-result nil))
+           (capture-1 (temporary-directory "pingvito-capture-1"))
+           (sample-1 (temporary-directory "pingvito-sample-1"))
+           (capture-2 (temporary-directory "pingvito-capture-2"))
+           (sample-2 (temporary-directory "pingvito-sample-2"))
+           (descriptor (prepare workspace-1 vars)))
       (unwind-protect
            (progn
+             ;; Every sample owns a distinct workspace sharing the run's
+             ;; mock descriptor, exactly like the framework copies them.
+             (uiop:copy-file (namestring (at workspace-1 ".eval-fixture.json"))
+                             (namestring (at workspace-2 ".eval-fixture.json")))
              ;; Two requests arrive during the first sample's window.
              (ok (= 200 (post-json (field descriptor "port") "/notify" "{\"message\":\"done\"}")))
              (ok (= 200 (post-json (field descriptor "port") "/ask" "{\"question\":\"ok\"}")))
-             (setf first-result (finalize workspace :vars vars
-                                                :archive-directory first-archive))
-             (ok (true-p (field first-result "ok")))
-             (ok (= 2 (field first-result "requests")))
-             (ok (= 2 (length (log-entries (namestring (at first-archive "requests.jsonl"))))))
+             ;; The OpenCode provider finalizes a workspace twice: its
+             ;; evidence capture archives the window first ...
+             (let ((result (finalize workspace-1 :vars vars :archive-directory capture-1)))
+               (ok (true-p (field result "ok")))
+               (ok (= 2 (field result "requests")))
+               (ok (= 2 (length (log-entries (namestring (at capture-1 "requests.jsonl")))))))
+             ;; ... and the graded sample's archive re-emits the same
+             ;; window without consuming it twice.
+             (let ((result (finalize workspace-1 :vars vars :archive-directory sample-1)))
+               (ok (true-p (field result "ok")))
+               (ok (= 2 (field result "requests")))
+               (ok (= 2 (length (log-entries (namestring (at sample-1 "requests.jsonl")))))))
              ;; The archived fixture keeps the full description plus the
              ;; archived offset range of this sample.
-             (let ((archived (read-json (at first-archive "fixture.json"))))
+             (let ((archived (read-json (at sample-1 "fixture.json"))))
                (ok (equal (field descriptor "token") (field archived "token")))
                (ok (= (field descriptor "pid") (field archived "pid")))
                (ok (equal (field descriptor "fixtureHome") (field archived "fixtureHome")))
@@ -364,17 +376,18 @@
                (ok (= 0 (field archived "offsetStart")))
                (ok (= 2 (field archived "offsetEnd"))))
              ;; The mock survives the sample: one more request arrives in
-             ;; the second sample's window and only it is archived.
+             ;; the second sample's window and only it is archived there.
              (ok (pid-alive-p (field descriptor "pid")))
              (ok (= 200 (post-json (field descriptor "port") "/notify" "{\"message\":\"again\"}")))
-             (setf second-result (finalize workspace :vars vars
-                                                 :archive-directory second-archive))
-             (ok (true-p (field second-result "ok")))
-             (ok (= 1 (field second-result "requests")))
-             (let ((entries (log-entries (namestring (at second-archive "requests.jsonl")))))
+             (let ((result (finalize workspace-2 :vars vars :archive-directory capture-2)))
+               (ok (true-p (field result "ok")))
+               (ok (= 1 (field result "requests"))))
+             (let* ((result (finalize workspace-2 :vars vars :archive-directory sample-2))
+                    (entries (log-entries (namestring (at sample-2 "requests.jsonl")))))
+               (ok (= 1 (field result "requests")))
                (ok (= 1 (length entries)))
                (ok (equal "/notify" (field (first entries) "endpoint"))))
-             (let ((archived (read-json (at second-archive "fixture.json"))))
+             (let ((archived (read-json (at sample-2 "fixture.json"))))
                (ok (= 2 (field archived "offsetStart")))
                (ok (= 3 (field archived "offsetEnd"))))
              ;; The mock and the run lock both outlive every sample.
@@ -382,9 +395,9 @@
              (ok (probe-file (lock-path))))
         (when (and descriptor (pid-alive-p (field descriptor "pid")))
           (stop-mock (field descriptor "pid")))
-        (remove-directory workspace)
-        (remove-directory first-archive)
-        (remove-directory second-archive)))))
+        (dolist (dir (list workspace-1 workspace-2
+                           capture-1 sample-1 capture-2 sample-2))
+          (remove-directory dir))))))
 
 (deftest fail-notify-mode-rejects-notify
   (with-fixture-project (project)
