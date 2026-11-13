@@ -3,7 +3,7 @@
     "id": "pingvito",
     "skillName": "pingvito",
     "skillPath": ".apm/skills/pingvito/",
-    "environmentProfile": "default",
+    "environmentProfile": "pingvito",
     "config": "evals/pingvito/promptfooconfig.json"
   }
 ]
