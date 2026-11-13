@@ -211,8 +211,8 @@ exec /bin/zsh \"$@\"~%"
       ((and live-p (eq running-mode fail-notify))
        (reuse-mock state))
       (live-p
-       (error "Mixed fail-notify modes in one run are unsupported: the shared mock (pid ~D) serves failNotify ~S while this case requests ~S; run the holdout case separately with --filter notify-on-error"
-              (field state "pid") (bool running-mode) (bool fail-notify)))
+       (error "Mixed fail-notify modes in one run are unsupported: the shared mock (pid ~D) serves failNotify ~:[false~;true~] while this case requests ~:[false~;true~]; run the holdout case separately with --filter notify-on-error"
+              (field state "pid") running-mode fail-notify))
       (t (start-shared-mock fail-notify)))))
 
 (-> mock-process-p (integer) boolean)
