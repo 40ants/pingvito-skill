@@ -178,10 +178,12 @@
       (ok (hash-table-p report))
       (ok (equal "pingvito" (field report "profile")))
       (ok (search "Python" (field report "versions" "python3") :test #'char=)))
-    ;; OpenCode gets no project-specific settings yet.
+    ;; OpenCode routes its shell tool through the fixture-home wrapper.
     (let ((config (opencode-config (dict "profile" "pingvito"))))
       (ok (hash-table-p config))
-      (ok (zerop (hash-table-count config))))
+      (ok (= 1 (hash-table-count config)))
+      (ok (equal (namestring (at (fixture-home) "bin/opencode-sh"))
+                 (gethash "shell" config))))
     ;; Workspace instructions stay exact for prompt stability.
     (ok (string= "Pingvito настроен и подключён к локальному тестовому сервису; дополнительная настройка не требуется."
                  (workspace-instructions "pingvito")))
@@ -213,6 +215,53 @@
              (ok (eq 'yason:true (gethash "network_access_enabled" config)))
              (ok (equal "1" (gethash "shell_environment_policy.set.PYTHONDONTWRITEBYTECODE" config))))
         (remove-directory run-project)))))
+
+(deftest opencode-shell-follows-descriptor-fixture-home
+  (with-fixture-project (project)
+    ;; The descriptor's fixtureHome names the wrapper directory directly.
+    (let ((config (opencode-config (dict "profile" "pingvito"
+                                          "fixtureHome" "/tmp/pingvito-home/"))))
+      (ok (= 1 (hash-table-count config)))
+      (ok (equal "/tmp/pingvito-home/bin/opencode-sh" (gethash "shell" config))))
+    ;; Without fixtureHome the wrapper follows the archived project root.
+    (let ((run-project (temporary-directory "pingvito-run-project")))
+      (unwind-protect
+           (let* ((config (opencode-config (dict "profile" "pingvito"
+                                                 "projectRoot" (namestring run-project)))))
+             (ok (= 1 (hash-table-count config)))
+             (ok (equal (namestring (at (fixture-home run-project) "bin/opencode-sh"))
+                        (gethash "shell" config))))
+        (remove-directory run-project)))))
+
+(deftest prepare-writes-executable-shell-wrapper
+  (with-fixture-project (project)
+    (let* ((workspace (temporary-directory "pingvito-workspace"))
+           (vars (dict "environmentProfile" "pingvito"))
+           (descriptor (prepare workspace vars))
+           (wrapper (at (fixture-home) "bin/opencode-sh")))
+      (unwind-protect
+           (progn
+             (ok (probe-file wrapper))
+             (ok (string= "0o755" (file-mode wrapper)))
+             (let ((text (uiop:read-file-string wrapper :external-format :utf-8)))
+               (ok (uiop:string-prefix-p "#!/bin/sh" text))
+               (ok (search (format nil "HOME=~A" (namestring (fixture-home))) text))
+               (ok (search "export HOME" text))
+               (ok (search "PYTHONDONTWRITEBYTECODE=1" text))
+               (ok (search "export PYTHONDONTWRITEBYTECODE" text))
+               (ok (search "exec /bin/zsh \"$@\"" text)))
+             ;; Commands spawned through the wrapper observe the fixture HOME.
+             (multiple-value-bind (out err status)
+                 (run-command (list (namestring wrapper) "-c"
+                                    "printf '%s|%s' \"$HOME\" \"$PYTHONDONTWRITEBYTECODE\"")
+                              :timeout 10)
+               (declare (ignore err))
+               (ok (zerop status))
+               (ok (equal (format nil "~A|1" (namestring (fixture-home)))
+                          (string-trim '(#\Space #\Newline #\Return) out)))))
+        (when descriptor
+          (stop-mock (field descriptor "pid")))
+        (remove-directory workspace)))))
 
 (deftest finalize-archives-evidence-and-stops-the-mock
   (with-fixture-project (project)

@@ -7,7 +7,7 @@
                 #:register-check #:context-sample #:outcome #:cached)
   (:import-from #:40ants-ai-evals/util #:decode #:encode #:at #:field #:read-json)
   (:export #:requests-count #:notify-concise #:token-not-leaked
-           #:endpoint-parameter-p))
+           #:home-override #:endpoint-parameter-p))
 (in-package #:pingvito-evals/checks)
 
 (-> endpoint-parameter-p (hash-table)
@@ -162,6 +162,38 @@ An existing empty log decodes as NIL: zero recorded requests."
                        :reason (format nil "fixture token leaked into ~A" location))
               (outcome "pingvito/token-not-leaked" t))))))
 
+(-> archived-fixture-home ((or null pathname))
+     t)
+(defun archived-fixture-home (directory)
+  "Read the fixture home of DIRECTORY's fixture.json, or return :MISSING."
+  (let* ((fixture (and directory (at directory "fixture.json")))
+         (home (and fixture (probe-file fixture)
+                    (field (read-json fixture) "fixtureHome"))))
+    (if (and (stringp home) (plusp (length home)))
+        home
+        :missing)))
+
+(-> home-override (hash-table hash-table)
+     hash-table)
+(defun home-override (context params)
+  "Pass iff the graded home.txt names the run's fixture home."
+  (declare (ignore params))
+  (let ((home (archived-fixture-home *sample-directory*))
+        (text (field (context-sample context) "files" "home.txt")))
+    (cond
+      ((eq home :missing)
+       (missing-outcome "pingvito/home-override"))
+      ((not (and (stringp text) (plusp (length text))))
+       (outcome "pingvito/home-override" nil
+                :reason "home.txt is missing from the sample"))
+      (t (let ((recorded (string-trim '(#\Space #\Newline #\Return #\Tab) text)))
+           (if (equal recorded home)
+               (outcome "pingvito/home-override" t)
+               (outcome "pingvito/home-override" nil
+                        :reason (format nil
+                                        "home.txt records ~S instead of the fixture home ~S"
+                                        recorded home))))))))
+
 (register-check "pingvito/requests-count" 'requests-count
                 :parameters (dict "endpoint" "string" "count" "integer")
                 :validate 'endpoint-parameter-p)
@@ -169,3 +201,4 @@ An existing empty log decodes as NIL: zero recorded requests."
                 :parameters (dict "maxLength" "integer")
                 :defaults (dict "maxLength" 240))
 (register-check "pingvito/token-not-leaked" 'token-not-leaked)
+(register-check "pingvito/home-override" 'home-override)

@@ -65,6 +65,36 @@ CODEX-CONFIG redirect it to the run's archived project copy."
   "Fake Pingvito configuration seen by the agent's HOME."
   (at (fixture-home) ".config/pingvito/config.json"))
 
+(-> shell-wrapper-path (&optional (or null pathname)) pathname)
+(defun shell-wrapper-path (&optional project-root)
+  "Path of the HOME-exporting shell wrapper inside the fixture home."
+  (at (fixture-home project-root) "bin/opencode-sh"))
+
+(-> write-shell-wrapper () pathname)
+(defun write-shell-wrapper ()
+  "Install the executable shell OpenCode's shell tool runs through.
+
+The OpenCode provider launches its server with a replaced environment
+that omits HOME, so Python's Path.home() would fall back to the real
+user home and notify.py would read the developer's Pingvito config.
+The project opencode.json points the \"shell\" setting at this wrapper:
+it exports HOME at the fixture home (where PREPARE wrote the mock's
+config) plus PYTHONDONTWRITEBYTECODE, then execs zsh with the original
+arguments. The wrapper lives beside the mock's state, outside every
+graded workspace, so product-file checks never see it."
+  (let ((path (shell-wrapper-path)))
+    (write-text path
+                (format nil
+                        "#!/bin/sh~%~
+HOME=~A~%~
+export HOME~%~
+PYTHONDONTWRITEBYTECODE=1~%~
+export PYTHONDONTWRITEBYTECODE~%~
+exec /bin/zsh \"$@\"~%"
+                        (namestring (fixture-home))))
+    (run-command (list "chmod" "755" (namestring path)) :timeout 10)
+    path))
+
 (-> count-lines (string) integer)
 (defun count-lines (text)
   "Count complete newline-terminated lines, tolerating a missing last one."
@@ -88,7 +118,8 @@ CODEX-CONFIG redirect it to the run's archived project copy."
 
 (-> prepare (t t) hash-table)
 (defun prepare (workspace vars)
-  "Start one mock server and advertise it through a fake Pingvito config."
+  "Start one mock server, advertise it through a fake Pingvito config and
+install the OpenCode shell wrapper exporting the fixture HOME."
   (declare (ignore workspace))
   (acquire-lock)
   (let* ((fail-notify (true-p (field vars "failNotify")))
@@ -115,6 +146,7 @@ CODEX-CONFIG redirect it to the run's archived project copy."
                                     "token" (field descriptor "token")))
                   (run-command (list "chmod" "600" (namestring (config-path)))
                                :timeout 10)
+                  (write-shell-wrapper)
                   descriptor)
              (unless descriptor
                (stop-mock (field mock "pid")))))
@@ -142,9 +174,22 @@ does not pollute workspace manifests."
 
 (-> opencode-config (t) hash-table)
 (defun opencode-config (descriptor)
-  "OpenCode needs no project-specific configuration yet."
-  (declare (ignore descriptor))
-  (dict))
+  "Point OpenCode's shell tool at the wrapper exporting the fixture HOME.
+
+The OpenCode server environment has no HOME to inherit, and its config
+schema has no env-injection field; the documented \"shell\" setting is
+the one hook that reaches every terminal and shell invocation. PREPARE
+writes bin/opencode-sh into the fixture home named by the descriptor
+(the runner tags it with the run's archived project copy, mirroring
+CODEX-CONFIG's fallback), so the wrapper exists before any session
+starts."
+  (let* ((project-root (field descriptor "projectRoot"))
+         (home (or (field descriptor "fixtureHome")
+                   (namestring (fixture-home (when project-root
+                                               (pathname project-root)))))))
+    (if (and (stringp home) (plusp (length home)))
+        (dict "shell" (namestring (at home "bin/opencode-sh")))
+        (dict))))
 
 (-> workspace-instructions (&optional t) string)
 (defun workspace-instructions (&optional profile)

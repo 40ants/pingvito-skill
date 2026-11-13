@@ -38,6 +38,21 @@
     }
   },
   {
+    "description": "opencode-home-probe: shell-обёртка экспортирует fixture HOME",
+    "vars": {
+      "id": "opencode-home-probe",
+      "group": "development",
+      "task": "Выполни в терминале команду: echo \"$HOME\" > home.txt — и заверши работу.",
+      "fixtures": "cases/opencode-home-probe/fixtures/",
+      "checks": [
+        {"check": "files/text-contains", "params": {"file": "home.txt", "contains": ".eval-cache/fixture-home"}},
+        {"check": "pingvito/home-override"},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": "home.txt", "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  },
+  {
     "description": "notify-on-error: одно уведомление при сбое сервиса",
     "vars": {
       "id": "notify-on-error",

@@ -5,7 +5,7 @@
   (:import-from #:rove #:deftest #:ok #:ng)
   (:import-from #:pingvito-evals/checks
                 #:requests-count #:notify-concise #:token-not-leaked
-                #:endpoint-parameter-p)
+                #:home-override #:endpoint-parameter-p)
   (:import-from #:40ants-ai-evals/checks #:make-context #:describe-checks)
   (:import-from #:40ants-ai-evals/case-resources #:*sample-directory*)
   (:import-from #:40ants-ai-evals/util
@@ -51,7 +51,8 @@ synthetic graded sample behind the resulting CONTEXT."
             (write-text (at directory "requests.jsonl")
                         (format nil "~{~A~^~%~}~%" ,lines))
             (write-json (at directory "fixture.json")
-                        (dict "profile" "pingvito" "token" (fake-token)))
+                        (dict "profile" "pingvito" "token" (fake-token)
+                              "fixtureHome" "/tmp/pingvito-fixture-home/"))
             (let* ((*sample-directory* directory)
                    (,context (make-context ,sample (dict))))
               ,@body))
@@ -65,7 +66,8 @@ synthetic graded sample behind the resulting CONTEXT."
     (ok (equal "integer" (field schemas "pingvito/notify-concise" "parameters" "maxLength")))
     ;; The conciseness limit defaults to 240 characters.
     (ok (equal 240 (field schemas "pingvito/notify-concise" "defaults" "maxLength")))
-    (ok (gethash "pingvito/token-not-leaked" schemas)))
+    (ok (gethash "pingvito/token-not-leaked" schemas))
+    (ok (gethash "pingvito/home-override" schemas)))
   ;; The endpoint parameter accepts exactly the documented names.
   (dolist (endpoint '("notify" "ask" "get-response" "any"))
     (ok (endpoint-parameter-p (dict "endpoint" endpoint)) endpoint))
@@ -164,6 +166,26 @@ synthetic graded sample behind the resulting CONTEXT."
         (ok (eq 'yason:false (field result "pass")))
         (ok (search "tool call" (field result "reason")))))))
 
+(deftest home-override-compares-home-txt-against-fixture
+  (flet ((sample-with-home (home)
+           (dict "files" (dict "home.txt" (concatenate 'string home (string #\Newline)))
+                 "final" "Работа завершена."
+                 "toolCalls" (vector))))
+    ;; home.txt naming the archived fixture home passes, trailing newline aside.
+    (with-evidence (context nil (sample-with-home "/tmp/pingvito-fixture-home/"))
+      (ok (eq 'yason:true (field (home-override context (dict)) "pass"))))
+    ;; A foreign home fails with a reason naming both values.
+    (with-evidence (context nil (sample-with-home "/Users/art"))
+      (let ((result (home-override context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "/Users/art" (field result "reason")))
+        (ok (search "/tmp/pingvito-fixture-home/" (field result "reason")))))
+    ;; A sample without home.txt fails with a dedicated reason.
+    (with-evidence (context nil (clean-sample))
+      (let ((result (home-override context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "home.txt" (field result "reason")))))))
+
 (deftest missing-evidence-fails-every-check-without-signalling
   ;; An empty sample directory grades as failed checks, never as errors.
   (let ((directory (temporary-directory "pingvito-empty")))
@@ -172,7 +194,8 @@ synthetic graded sample behind the resulting CONTEXT."
                 (context (make-context (clean-sample) (dict))))
            (dolist (result (list (requests-count context (dict "endpoint" "any" "count" 1))
                                  (notify-concise context (dict "maxLength" 240))
-                                 (token-not-leaked context (dict))))
+                                 (token-not-leaked context (dict))
+                                 (home-override context (dict))))
              (ok (eq 'yason:false (field result "pass")))
              (ok (equal "mock evidence missing" (field result "reason")))))
       (remove-directory directory)))
