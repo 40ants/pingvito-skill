@@ -14,10 +14,13 @@
 ;; Mirrors 40ants-ai-evals/util: SBCL's sb-posix provides our own pid.
 (eval-when (:compile-toplevel :load-toplevel :execute) (require :sb-posix))
 
-(-> fixture-home () pathname)
-(defun fixture-home ()
-  "Per-project directory holding the mock's config, logs and lock."
-  (at (root) ".eval-cache/fixture-home/"))
+(-> fixture-home (&optional (or null pathname)) pathname)
+(defun fixture-home (&optional project-root)
+  "Per-project directory holding the mock's config, logs and lock.
+
+PROJECT-ROOT defaults to the consuming project's root; callers such as
+CODEX-CONFIG redirect it to the run's archived project copy."
+  (at (or project-root (root)) ".eval-cache/fixture-home/"))
 
 (-> lock-path () pathname)
 (defun lock-path ()
@@ -120,9 +123,16 @@
 
 (-> codex-config (t) hash-table)
 (defun codex-config (descriptor)
-  "Point the Codex shell environment's HOME at the fixture home."
-  (dict "shell_environment_policy.set.HOME"
-        (or (field descriptor "fixtureHome") (namestring (fixture-home)))))
+  "Point the Codex shell environment's HOME at the fixture home.
+
+The runner tags the descriptor with the run's archived project copy in
+PROJECT-ROOT; HOME must follow it, because that is where PREPARE (running
+under SKILL_EVAL_PROJECT_ROOT) writes the mock's config."
+  (let ((project-root (field descriptor "projectRoot")))
+    (dict "shell_environment_policy.set.HOME"
+          (or (field descriptor "fixtureHome")
+              (namestring (fixture-home (when project-root
+                                          (pathname project-root))))))))
 
 (-> opencode-config (t) hash-table)
 (defun opencode-config (descriptor)

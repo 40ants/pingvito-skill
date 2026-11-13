@@ -182,6 +182,24 @@
       (ok (equal "/tmp/pingvito-home/"
                  (gethash "shell_environment_policy.set.HOME" config))))))
 
+(deftest codex-home-follows-descriptor-project-root
+  (with-fixture-project (project)
+    ;; Without projectRoot the HOME keeps the util:root fallback.
+    (let ((config (codex-config (dict "profile" "pingvito"))))
+      (ok (= 1 (hash-table-count config)))
+      (ok (equal (namestring (fixture-home))
+                 (gethash "shell_environment_policy.set.HOME" config))))
+    ;; The runner tags the preflight descriptor with the run's archived
+    ;; project copy; HOME must follow that root, not the live checkout.
+    (let ((run-project (temporary-directory "pingvito-run-project")))
+      (unwind-protect
+           (let ((config (codex-config (dict "profile" "pingvito"
+                                             "projectRoot" (namestring run-project)))))
+             (ok (= 1 (hash-table-count config)))
+             (ok (equal (namestring (at run-project ".eval-cache/fixture-home/"))
+                        (gethash "shell_environment_policy.set.HOME" config))))
+        (remove-directory run-project)))))
+
 (deftest finalize-archives-evidence-and-stops-the-mock
   (with-fixture-project (project)
     (let* ((workspace (temporary-directory "pingvito-workspace"))
