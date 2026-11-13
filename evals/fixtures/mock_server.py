@@ -4,8 +4,9 @@ Usage: python3 mock_server.py --log LOG_PATH --ready READY_PATH [--fail-notify]
 
 Writes the ready file (JSON with the server pid and port) once the socket
 listens, then serves until SIGTERM or SIGINT. Every received request —
-answered or rejected — is appended to LOG_PATH as one UTF-8 JSON line:
-{"endpoint": "/notify", "status": 200, "body": {...}}
+answered or rejected — is appended to LOG_PATH as one UTF-8 JSON line under
+its canonical unprefixed endpoint; an optional leading "/api" base path is
+accepted and stripped: {"endpoint": "/notify", "status": 200, "body": {...}}
 """
 
 import argparse
@@ -35,16 +36,22 @@ class MockPingvitoHandler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError, ValueError):
             body = None
 
-        if self.path not in RESPONSES:
+        # Production clients post under the /api base path; routing and the
+        # request log both use the canonical unprefixed endpoint.
+        path = self.path
+        if path.startswith("/api/"):
+            path = path[len("/api"):]
+
+        if path not in RESPONSES:
             status, payload = 404, {"error": "not found"}
         elif body is None:
             status, payload = 400, {"error": "malformed JSON"}
-        elif self.path == "/notify" and self.server.fail_notify:
+        elif path == "/notify" and self.server.fail_notify:
             status, payload = 500, {"error": "service unavailable"}
         else:
-            status, payload = 200, RESPONSES[self.path]
+            status, payload = 200, RESPONSES[path]
 
-        self.record_request(self.path, status, body)
+        self.record_request(path, status, body)
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")

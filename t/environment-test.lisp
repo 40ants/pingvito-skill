@@ -62,6 +62,14 @@
                                  :headers '(("Content-Type" . "application/json"))))
     (dexador:http-request-failed () -1)))
 
+(defun post-url (url payload)
+  "POST PAYLOAD to a full URL and return the HTTP status integer, -1 on failure."
+  (handler-case
+      (nth-value 1 (dexador:post url
+                                 :content payload
+                                 :headers '(("Content-Type" . "application/json"))))
+    (dexador:http-request-failed () -1)))
+
 (defun log-entries (log-path)
   "Decode every JSONL entry of the request log."
   (mapcar #'decode
@@ -91,16 +99,18 @@
              (ok (eq 'yason:false (field descriptor "failNotify")))
              ;; The framework persists the descriptor inside the workspace.
              (ok (probe-file (at workspace ".eval-fixture.json")))
-             ;; The fake Pingvito config points at the running mock.
+             ;; The fake Pingvito config points at the running mock, and the
+             ;; advertised host URL — exactly what notify.py constructs —
+             ;; serves the canonical endpoint.
              (let* ((config-path (at (fixture-home) ".config/pingvito/config.json"))
-                    (config (read-json config-path)))
+                    (config (read-json config-path))
+                    (host (field config "host")))
                (ok (equal (format nil "http://127.0.0.1:~A/api" (field descriptor "port"))
-                          (field config "host")))
+                          host))
                (ok (equal (field descriptor "token") (field config "token")))
-               (ok (string= "0o600" (file-mode config-path))))
-             ;; The mock is reachable and records a real request.
-             (ok (= 200 (post-json (field descriptor "port") "/notify"
-                                   "{\"message\":\"привет\"}")))
+               (ok (string= "0o600" (file-mode config-path)))
+               (ok (= 200 (post-url (concatenate 'string host "/notify")
+                                    "{\"message\":\"привет\"}"))))
              (let ((entries (log-entries (field descriptor "logPath"))))
                (ok (= 1 (length entries)))
                (ok (equal "/notify" (field (first entries) "endpoint")))

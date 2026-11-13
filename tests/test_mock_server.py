@@ -85,6 +85,27 @@ class MockServerTests(unittest.TestCase):
             {"endpoint": "/get-response", "status": 200,
              "body": {"token": TOKEN}}])
 
+    def test_api_prefix_routes_like_canonical_and_logs_canonical(self):
+        self.start_server()
+        for path, payload, expected in [
+                ("/api/notify", {"token": TOKEN, "text": "Готово"}, {"ok": True}),
+                ("/api/get-response", {"token": TOKEN}, {"status": "pending"})]:
+            with self.subTest(endpoint=path):
+                status, body = self.post(
+                    path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), expected)
+        status, _ = self.post("/api/unknown",
+                              json.dumps({"token": TOKEN}).encode("utf-8"))
+        self.assertEqual(status, 404)
+        # Every entry is logged under its canonical unprefixed endpoint,
+        # regardless of which client form was used.
+        self.assertEqual(self.read_log(), [
+            {"endpoint": "/notify", "status": 200,
+             "body": {"token": TOKEN, "text": "Готово"}},
+            {"endpoint": "/get-response", "status": 200, "body": {"token": TOKEN}},
+            {"endpoint": "/unknown", "status": 404, "body": {"token": TOKEN}}])
+
     def test_fail_notify_mode(self):
         self.start_server("--fail-notify")
         status, body = self.post("/notify",
