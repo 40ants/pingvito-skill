@@ -7,3 +7,6 @@ build/
 .codex/
 .claude/
 config.json
+.qlot/
+.evals/
+.eval-cache/

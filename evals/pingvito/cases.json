@@ -1,0 +1,14 @@
+[
+  {
+    "description": "notify-long-task: одно уведомление после долгой работы",
+    "vars": {
+      "id": "notify-long-task",
+      "group": "development",
+      "task": "Используй навык pingvito. Ты автономно работаешь над этой задачей уже 12 минут (от начала работы до сейчас прошло 12 минут). Заверши работу: в calc.py исправь функцию divide (она должна возвращать a / b), затем запиши краткий итог работы (2–3 предложения) в report.txt, первой строкой — «Итог:».",
+      "fixtures": "cases/notify-long-task/fixtures/",
+      "outputFile": "report.txt",
+      "fixedFile": "calc.py",
+      "fixedText": "a / b"
+    }
+  }
+]

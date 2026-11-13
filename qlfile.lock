@@ -1,0 +1,8 @@
+("quicklisp" .
+ (:class qlot/source/dist:source-dist
+  :initargs (:distribution "https://beta.quicklisp.org/dist/quicklisp.txt" :%version "2026-01-01")
+  :version "2026-01-01"))
+("40ants-ai-evals" .
+ (:class qlot/source/github:source-github
+  :initargs (:repos "40ants/ai-evals" :ref "d361547b36663e2365398e85ed228634d97459fd" :branch nil :tag nil)
+  :version "github-d361547b36663e2365398e85ed228634d97459fd"))
