@@ -2,5 +2,4 @@
 (asdf:defsystem "pingvito-evals"
   :class :package-inferred-system
   :license "Unlicense"
-  ;; Task 4 appends "pingvito-evals/checks" together with checks.lisp.
-  :depends-on ("pingvito-evals/environment"))
+  :depends-on ("pingvito-evals/checks" "pingvito-evals/environment"))
