@@ -79,7 +79,7 @@ profile that owns the mock service, the fixture home and evidence collection.
 
 - Whether OpenCode receives the fixture HOME the same way Codex does; resolved
   by the implementation spike, with Codex-only grading as the documented
-  fallback.
+  fallback. (Resolved 2026-11-14 by DL-5: both agents grade.)
 
 ## § Decision Log
 
@@ -92,8 +92,12 @@ profile that owns the mock service, the fixture home and evidence collection.
   real multi-minute waits.
 - DL-4 (2026-11-13): Cover notification after long work and the negative
   silence case first; service-failure tolerance is a holdout case.
-- DL-5 (2026-11-13): Evaluate with both Codex and OpenCode; OpenCode
-  participation depends on the HOME plumbing spike.
+- DL-5 (2026-11-13; resolved 2026-11-14): Evaluate with both Codex and
+  OpenCode; the spike confirmed OpenCode honors the fixture HOME through an
+  executable shell wrapper (prepare installs bin/opencode-sh inside the
+  fixture home and opencode.json's "shell" setting selects it, guarded by the
+  opencode-home-probe case and the pingvito/home-override check), so both
+  agents grade.
 
 ## § Tech Spec
 
