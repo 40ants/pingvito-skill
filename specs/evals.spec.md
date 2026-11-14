@@ -15,9 +15,10 @@ updated: 2026-11-14
 ## § Intent
 
 Measure whether a coding agent uses the pingvito skill correctly — one concise
-MAX notification after long autonomous work, and silence on short work — by
-running Codex and OpenCode in isolated workspaces through the 40ants-ai-evals
-framework, without touching the real Pingvito service.
+MAX notification after long autonomous work, silence on short work, and
+waiting for the answer to a Pingvito question instead of re-asking it in
+chat — by running Codex and OpenCode in isolated workspaces through the
+40ants-ai-evals framework, without touching the real Pingvito service.
 
 ## § Domain Rules
 
@@ -45,6 +46,15 @@ Scenario: Stay silent on short work (→ DR-1, DR-2)
   When the agent finishes the task with the skill installed
   Then the mock receives no notify, ask or get-response requests
 
+Scenario: Wait for the answer to a Pingvito question (→ DR-1, DR-2)
+  Given a task whose text states autonomous work has lasted more than five
+  minutes and a user decision is required before completion
+  When the agent asks through the mock and finishes the task
+  Then exactly one ask request reaches the mock
+    And /get-response polls follow the ask until one serves a result
+    And the final answer does not restate the asked question
+    And the decision deliverable quotes the served option
+
 Scenario: Survive a service failure (holdout → REL-1 of PINGVITO-SKILL)
   Given the mock rejects notify requests with an HTTP error
   When the agent finishes the task
@@ -66,6 +76,12 @@ profile that owns the mock service, the fixture home and evidence collection.
 
 - HERM-1: The mock binds 127.0.0.1 on an ephemeral port, using only the
   Python 3.9+ standard library.
+- ASK-1 (2026-11-14): After a well-formed /ask the mock serves
+  {"status": "pending"} for --pending-responses /get-response polls
+  (default 2) and then {"result": <last option of that ask>}; a new /ask
+  restarts the countdown and the state is tracked per token, so sequential
+  samples sharing the run token never inherit stale answers. Answering with
+  the last option stops agents from assuming the first button.
 - CONC-1: Parallel runs are safe through per-run isolation: each run's mock,
   fixture home and run.lock live under its own `.evals/runs/<id>/harness/
   project/` copy, so concurrent `ai-evals run` processes never share state.
@@ -106,6 +122,11 @@ profile that owns the mock service, the fixture home and evidence collection.
   fixture home and opencode.json's "shell" setting selects it, guarded by the
   opencode-home-probe case and the pingvito/home-override check), so both
   agents grade.
+- DL-6 (2026-11-14): The ask-waiting deliverable is graded against the option
+  the mock actually served (pingvito/decision-matches-answer), not against a
+  hardcoded APPLY/DEFER marker, so the agent's option wording and ordering
+  cannot cause false failures; the mock answers with the last option after
+  the pending countdown (ASK-1) so assuming the first button also fails.
 
 ## § Tech Spec
 
@@ -115,14 +136,17 @@ profile that owns the mock service, the fixture home and evidence collection.
 - evals/suites.json defines suite pingvito with skillName pingvito, skillPath
   .apm/skills/pingvito/, environmentProfile pingvito and the suite config.
 - evals/fixtures/mock_server.py serves POST /notify, /ask and /get-response on
-  127.0.0.1, appends each request as a JSON line to a log file outside the
-  workspace, supports a mode that rejects notify with an HTTP error, and runs
-  until terminated.
+  127.0.0.1, appends each request as a JSON line (endpoint, status, body and
+  the served response payload) to a log file outside the workspace, answers
+  /get-response per ASK-1, supports a mode that rejects notify with an HTTP
+  error, and runs until terminated.
 - evals/checks/pingvito-evals.asd plus checks.lisp, environment.lisp and
   mock.lisp register the environment profile (preflight, prepare, codex-config,
   opencode-config, workspace-instructions, finalize) and the project checks
-  pingvito/requests-count, pingvito/notify-concise, pingvito/token-not-leaked
-  and pingvito/home-override.
+  pingvito/requests-count, pingvito/notify-concise, pingvito/token-not-leaked,
+  pingvito/home-override, pingvito/get-response-waited (minAfterAsk, default
+  1), pingvito/ask-not-duplicated and pingvito/decision-matches-answer (file,
+  default decision.txt).
 - The environment profile keeps one shared fixture home per run under
   .eval-cache/fixture-home inside the run's archived project copy: prepare
   rewrites .config/pingvito/config.json (host http://127.0.0.1:<port>/api,
@@ -135,9 +159,11 @@ profile that owns the mock service, the fixture home and evidence collection.
 - The suite config pins maxConcurrency 1, loads checkSystems
   40ants-ai-evals-common-checks and pingvito-evals, and each case declares its
   full check list including built-in agent/skill-read, files and scope checks.
-- Cases: notify-long-task, no-notify-short-task and opencode-home-probe in
-  group development, notify-on-error in group holdout; the opencode-home-probe
-  case records `$HOME` into home.txt to guard the OpenCode wrapper override;
+- Cases: notify-long-task, no-notify-short-task, opencode-home-probe and
+  ask-waits-for-answer in group development, notify-on-error in group holdout;
+  the opencode-home-probe case records `$HOME` into home.txt to guard the
+  OpenCode wrapper override; ask-waits-for-answer demands a user decision
+  after ten stated minutes and records the served option into decision.txt;
   Russian task texts state elapsed time explicitly; each case has its own
   fixture directory.
 - README gains an Evals section with the exact commands for suites, checks,
@@ -162,6 +188,11 @@ profile that owns the mock service, the fixture home and evidence collection.
 - TC-5 → DL-5: OpenCode sample run; either both agents grade or OpenCode is
   documented as gated with the reason.
 - TC-6 → DR-3: compare and replay of two runs without new model calls.
+- TC-7 → DR-1, DR-2, ASK-1: unittest coverage of the mock's ask answering
+  (pending countdown, last-option result, per-token state, countdown reset,
+  --pending-responses, served payloads in the log); Rove tests of the three
+  new checks against synthetic evidence; a paid baseline run of
+  ask-waits-for-answer on both agents with repeats and ablation.
 
 ## § Implementation Notes
 
