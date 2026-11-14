@@ -300,12 +300,34 @@ synthetic graded sample behind the resulting CONTEXT."
                             (sample-with-final "Пользователь выбрал «Нет»."))
       (ok (eq 'yason:true
               (field (ask-not-duplicated context (dict)) "pass"))))
-    ;; Restating the question in chat fails, case and whitespace aside.
+    ;; A report quoting the asked question passes when it also reports the
+    ;; answer the polls served — quoting is reporting, not re-asking.
+    (with-evidence (context
+                    (list (ask-entry :question "Работа завершена. Применить изменения?"
+                                     :options (vector "Применить" "Отложить"))
+                          (get-response-entry)
+                          (get-response-entry)
+                          (get-response-entry :response (dict "result" "Отложить")))
+                    (sample-with-final
+                      (format nil "Отправил вопрос: «Работа завершена. Применить изменения?» ~
+                                   с кнопками «Применить» / «Отложить». Пользователь выбрал «Отложить».")))
+      (ok (eq 'yason:true
+              (field (ask-not-duplicated context (dict)) "pass"))))
+    ;; Restating the question without any served answer fails, punctuation
+    ;; drift in the restate aside.
     (with-evidence (context (list (ask-entry))
                             (sample-with-final "Готово?  жду вашего решения"))
       (let ((result (ask-not-duplicated context (dict))))
         (ok (eq 'yason:false (field result "pass")))
-        (ok (search "restates" (field result "reason")))))
+        (ok (search "re-asks" (field result "reason")))))
+    ;; Restating the question fails even though earlier polls served a
+    ;; result the final never reports.
+    (with-evidence (context
+                    (list (ask-entry)
+                          (get-response-entry :response (dict "result" "Нет")))
+                    (sample-with-final "Готово?  жду вашего решения"))
+      (ok (eq 'yason:false
+              (field (ask-not-duplicated context (dict)) "pass"))))
     ;; No ask in the log fails naming the ask.
     (with-evidence (context nil (sample-with-final "Работа завершена."))
       (let ((result (ask-not-duplicated context (dict))))
@@ -317,6 +339,13 @@ synthetic graded sample behind the resulting CONTEXT."
                                         "body" (dict "token" (fake-token)
                                                      "options" (vector "Да" "Нет")))))
                     (sample-with-final "Готово?"))
+      (let ((result (ask-not-duplicated context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "question" (field result "reason")))))
+    ;; A whitespace-only question is as good as none.
+    (with-evidence (context
+                    (list (ask-entry :question "   "))
+                    (sample-with-final "Работа завершена."))
       (let ((result (ask-not-duplicated context (dict))))
         (ok (eq 'yason:false (field result "pass")))
         (ok (search "question" (field result "reason")))))))
@@ -332,15 +361,33 @@ synthetic graded sample behind the resulting CONTEXT."
                           (get-response-entry)
                           (get-response-entry)
                           (get-response-entry :response (dict "result" "отложить")))
-                    (sample-with-decision "Отложить.\n"))
+                    (sample-with-decision
+                      (concatenate 'string "«Отложить»." (string #\Newline))))
       (ok (eq 'yason:true
               (field (decision-matches-answer context (dict)) "pass"))))
+    ;; A multi-word option matches as a whole phrase.
+    (with-evidence (context
+                    (list (ask-entry :question "Что делаем?"
+                                     :options (vector "Применить изменения" "Отложить"))
+                          (get-response-entry :response (dict "result" "Применить изменения")))
+                    (sample-with-decision "Выбран вариант: применить изменения"))
+      (ok (eq 'yason:true
+              (field (decision-matches-answer context (dict)) "pass"))))
+    ;; The option must appear as whole words: a short option hidden inside
+    ;; other words does not count.
+    (with-evidence (context
+                    (list (ask-entry :options (vector "До свидания" "Да"))
+                          (get-response-entry :response (dict "result" "Да")))
+                    (sample-with-decision "до свидания"))
+      (let ((result (decision-matches-answer context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "does not quote" (field result "reason")))))
     ;; Naming the other option fails.
     (with-evidence (context
                     (list (ask-entry :question "Применить изменения?"
                                      :options (vector "Применить" "Отложить"))
                           (get-response-entry :response (dict "result" "Отложить")))
-                    (sample-with-decision "Применить\n"))
+                    (sample-with-decision "Применить"))
       (let ((result (decision-matches-answer context (dict))))
         (ok (eq 'yason:false (field result "pass")))
         (ok (search "does not quote" (field result "reason")))))
@@ -348,7 +395,7 @@ synthetic graded sample behind the resulting CONTEXT."
     (with-evidence (context
                     (list (ask-entry)
                           (get-response-entry))
-                    (sample-with-decision "Отложить\n"))
+                    (sample-with-decision "Отложить"))
       (let ((result (decision-matches-answer context (dict))))
         (ok (eq 'yason:false (field result "pass")))
         (ok (search "served a result" (field result "reason")))))
@@ -361,7 +408,7 @@ synthetic graded sample behind the resulting CONTEXT."
         (ok (eq 'yason:false (field result "pass")))
         (ok (search "decision.txt" (field result "reason")))))
     ;; The file parameter names a different deliverable.
-    (let ((sample (dict "files" (dict "choice.txt" "Отложить\n")
+    (let ((sample (dict "files" (dict "choice.txt" "Отложить")
                        "final" "Работа завершена." "toolCalls" (vector))))
       (with-evidence (context
                       (list (ask-entry)

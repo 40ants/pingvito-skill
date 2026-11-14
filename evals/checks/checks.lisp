@@ -140,6 +140,42 @@ a corrupt line yields NIL entries plus the corruption reason."
                               (setf space-pending nil))
                             (write-char char out)))))
 
+(defparameter *token-edge-punctuation* "«»\"'`.,:;!?()[]{}<>*_—–-#"
+  "Characters stripped from both ends of a token before phrase matching.")
+
+(-> strip-token (string)
+    string)
+(defun strip-token (token)
+  "Trim matching edge punctuation — quotes, brackets, separators — from TOKEN."
+  (string-trim *token-edge-punctuation* token))
+
+(-> phrase-tokens (string)
+    list)
+(defun phrase-tokens (text)
+  "Split normalized TEXT into downcased punctuation-stripped word tokens."
+  (remove "" (mapcar #'strip-token
+                     (uiop:split-string (normalize-text text)
+                                        :separator " "))
+          :test #'string=))
+
+(-> starts-with-tokens-p (list list)
+    boolean)
+(defun starts-with-tokens-p (prefix list)
+  "Does LIST begin with every string of PREFIX, in order?"
+  (and (<= (length prefix) (length list))
+       (every #'string= prefix (subseq list 0 (length prefix)))))
+
+(-> contains-phrase-p (string string)
+    boolean)
+(defun contains-phrase-p (phrase text)
+  "Does TEXT contain PHRASE as a run of whole word tokens, ignoring case,
+punctuation edges and whitespace runs?"
+  (let ((needle (phrase-tokens phrase))
+        (haystack (phrase-tokens text)))
+    (and needle
+         (loop for rest on haystack
+               thereis (starts-with-tokens-p needle rest)))))
+
 (-> served-decision (list)
     (or null string))
 (defun served-decision (requests)
@@ -318,7 +354,10 @@ a corrupt line yields NIL entries plus the corruption reason."
 (-> ask-not-duplicated (hash-table hash-table)
      hash-table)
 (defun ask-not-duplicated (context params)
-  "Pass iff the final answer does not restate the question asked via /ask."
+  "Pass iff the final answer does not re-ask the question without its answer.
+
+Quoting the asked question while also reporting the served answer is a
+report, not a duplicate question, and passes."
   (declare (ignore params))
   (let* ((evidence (mock-evidence context))
          (error (field evidence "requestsError"))
@@ -334,19 +373,24 @@ a corrupt line yields NIL entries plus the corruption reason."
               (outcome "pingvito/ask-not-duplicated" nil
                        :reason "no /ask request in the log"))
              (t (let* ((question (field entry "body" "question"))
-                       (final (field (context-sample context) "final")))
+                       (final (field (context-sample context) "final"))
+                       (asked (and (stringp question)
+                                   (plusp (length (normalize-text question))))))
                   (cond
-                    ((not (and (stringp question) (plusp (length question))))
+                    ((not asked)
                      (outcome "pingvito/ask-not-duplicated" nil
                               :reason "the /ask request carries no question text"))
                     ((not (stringp final))
                      (outcome "pingvito/ask-not-duplicated" nil
                               :reason "the sample has no final answer to inspect"))
-                    ((search (normalize-text question) (normalize-text final))
-                     (outcome "pingvito/ask-not-duplicated" nil
-                              :reason "the final answer restates the question asked through Pingvito"))
+                    ((not (contains-phrase-p question final))
+                     (outcome "pingvito/ask-not-duplicated" t))
+                    ((let ((answer (served-decision requests)))
+                       (and answer (contains-phrase-p answer final)))
+                     (outcome "pingvito/ask-not-duplicated" t))
                     (t
-                     (outcome "pingvito/ask-not-duplicated" t)))))))))))
+                     (outcome "pingvito/ask-not-duplicated" nil
+                              :reason "the final answer re-asks the question without its answer")))))))))))
 
 (-> decision-matches-answer (hash-table hash-table)
      hash-table)
@@ -370,7 +414,7 @@ a corrupt line yields NIL entries plus the corruption reason."
              ((not (and (stringp text) (plusp (length text))))
               (outcome "pingvito/decision-matches-answer" nil
                        :reason (format nil "~A is missing from the sample" file)))
-             ((search (normalize-text answer) (normalize-text text))
+             ((contains-phrase-p answer text)
               (outcome "pingvito/decision-matches-answer" t))
              (t
               (outcome "pingvito/decision-matches-answer" nil
