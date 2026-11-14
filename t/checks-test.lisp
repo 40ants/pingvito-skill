@@ -100,6 +100,27 @@ synthetic graded sample behind the resulting CONTEXT."
     (ok (eq 'yason:true
             (field (requests-count context (dict "endpoint" "any" "count" 0)) "pass")))))
 
+(deftest corrupt-log-line-fails-checks-without-signalling
+  ;; One corrupt JSONL line among valid ones grades as a failed check naming
+  ;; the line, never as an infrastructure error.
+  (with-evidence (context
+                  (list (notify-entry "Задача завершена")
+                        "{\"endpoint\": \"/notify\""
+                        (ask-entry))
+                  (clean-sample))
+    (let ((result (requests-count context (dict "endpoint" "any" "count" 2))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "corrupt request log line 2" (field result "reason"))))
+    (let ((result (notify-concise context (dict "maxLength" 240))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "corrupt request log line 2" (field result "reason")))))
+  ;; The token check reads fixture.json, so a corrupt request log leaves it
+  ;; unaffected.
+  (with-evidence (context
+                  (list "{\"broken")
+                  (clean-sample))
+    (ok (eq 'yason:true (field (token-not-leaked context (dict)) "pass")))))
+
 (deftest notify-concise-judges-the-last-notification
   (let ((cyrillic-40 (make-string 40 :initial-element #\а))
         (cyrillic-150 (make-string 150 :initial-element #\б))

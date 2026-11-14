@@ -9,8 +9,8 @@
   (:import-from #:pingvito-evals/environment #:fixture-home)
   (:import-from #:40ants-ai-evals/util
                 #:*project-root* #:at #:decode #:field #:json-equal-p #:true-p
-                #:read-json #:write-text #:temporary-directory #:remove-directory
-                #:run-command)
+                #:read-json #:write-json #:write-text #:temporary-directory
+                #:remove-directory #:run-command)
   (:import-from #:40ants-ai-evals/environments
                 #:prepare #:preflight #:codex-config #:opencode-config
                 #:workspace-instructions #:finalize))
@@ -176,7 +176,10 @@
              (ok message)
              (ok (search "Mixed fail-notify modes" message :test #'char=))
              (ok (search "unsupported" message :test #'char=))
-             (ok (search "--filter" message :test #'char=))
+             (ok (search "--group holdout --filter notify-on-error"
+                         message :test #'char=))
+             (ok (search "--group all --filter notify-on-error"
+                         message :test #'char=))
              ;; The running mock survives the rejected prepare.
              (ok (pid-alive-p (field descriptor "pid"))))
         (when (and descriptor (pid-alive-p (field descriptor "pid")))
@@ -241,6 +244,75 @@
         (when (and first-descriptor (pid-alive-p (field first-descriptor "pid")))
           (stop-mock (field first-descriptor "pid")))
         (remove-directory workspace)))))
+
+(deftest preflight-sweeps-per-run-fixture-homes
+  (with-fixture-project (project)
+    (flet ((run-home (id)
+             (at project (format nil
+                                 ".evals/runs/~A/harness/project/.eval-cache/fixture-home/"
+                                 id))))
+      (let* ((leftover-log (at (run-home "run-leftover") "logs/mock-requests.jsonl"))
+             (foreign (uiop:launch-program '("sleep" "30")))
+             (expired (uiop:launch-program '("sleep" "0.2")))
+             (dead-pid nil)
+             (leftover nil)
+             (locked nil))
+        ;; A pid that already exited, as an ancient crashed run records.
+        (uiop:wait-process expired)
+        (setf dead-pid (uiop:process-info-pid expired))
+        (unwind-protect
+             (progn
+               ;; The leftover run records a genuinely running mock_server.py
+               ;; under its own harness copy, exactly where real runs leave
+               ;; their mocks behind.
+               (setf leftover
+                     (start-mock :log-path leftover-log
+                                 :ready-path (at (run-home "run-leftover")
+                                                 "mock-ready.json")))
+               (write-json (at (run-home "run-leftover") "mock-state.json")
+                           (dict "port" (field leftover "port")
+                                 "pid" (field leftover "pid")
+                                 "token" "evals-leftover"
+                                 "logPath" (namestring leftover-log)))
+               ;; The foreign run records a live process that is NOT the mock,
+               ;; and the expired run a dead pid: neither may be signalled.
+               (write-json (at (run-home "run-foreign") "mock-state.json")
+                           (dict "pid" (uiop:process-info-pid foreign)))
+               (write-json (at (run-home "run-expired") "mock-state.json")
+                           (dict "pid" dead-pid))
+               ;; A mid-flight run owns its fixture home: the live lock keeps
+               ;; the sweep away from that run's own mock.
+               (setf locked
+                     (start-mock :log-path (at (run-home "run-live")
+                                               "logs/mock-requests.jsonl")
+                                 :ready-path (at (run-home "run-live")
+                                                 "mock-ready.json")))
+               (write-json (at (run-home "run-live") "mock-state.json")
+                           (dict "pid" (field locked "pid")))
+               (write-text (at (run-home "run-live") "run.lock")
+                           (princ-to-string (uiop:process-info-pid foreign)))
+               (preflight "pingvito" :check-tools nil)
+               ;; The pid-verified leftover mock is terminated ...
+               (ng (pid-alive-p (field leftover "pid")))
+               ;; ... while the foreign live process survives pid verification
+               ;; and the locked run's mock survives the sweep untouched.
+               (ok (pid-alive-p (uiop:process-info-pid foreign)))
+               (ok (pid-alive-p (field locked "pid")))
+               ;; The swept homes' state files are cleared; the locked home
+               ;; keeps everything.
+               (ng (probe-file (at (run-home "run-leftover") "mock-state.json")))
+               (ng (probe-file (at (run-home "run-leftover") "mock-ready.json")))
+               (ng (uiop:directory-exists-p (at (run-home "run-leftover") "logs/")))
+               (ng (probe-file (at (run-home "run-foreign") "mock-state.json")))
+               (ng (probe-file (at (run-home "run-expired") "mock-state.json")))
+               (ok (probe-file (at (run-home "run-live") "mock-state.json"))))
+          (when (and leftover (pid-alive-p (field leftover "pid")))
+            (stop-mock (field leftover "pid")))
+          (when (and locked (pid-alive-p (field locked "pid")))
+            (stop-mock (field locked "pid")))
+          (when (uiop:process-alive-p foreign)
+            (uiop:terminate-process foreign :urgent t)
+            (uiop:wait-process foreign)))))))
 
 (deftest static-callbacks-match-the-contract
   (with-fixture-project (project)
@@ -316,11 +388,12 @@
              (ok (string= "0o755" (file-mode wrapper)))
              (let ((text (uiop:read-file-string wrapper :external-format :utf-8)))
                (ok (uiop:string-prefix-p "#!/bin/sh" text))
-               (ok (search (format nil "HOME=~A" (namestring (fixture-home))) text))
+               (ok (search (format nil "HOME=\"~A\"" (namestring (fixture-home)))
+                           text))
                (ok (search "export HOME" text))
                (ok (search "PYTHONDONTWRITEBYTECODE=1" text))
                (ok (search "export PYTHONDONTWRITEBYTECODE" text))
-               (ok (search "exec /bin/zsh \"$@\"" text)))
+               (ok (search "exec \"${SKILL_EVAL_SHELL:-/bin/zsh}\" \"$@\"" text)))
              ;; Commands spawned through the wrapper observe the fixture HOME.
              (multiple-value-bind (out err status)
                  (run-command (list (namestring wrapper) "-c"

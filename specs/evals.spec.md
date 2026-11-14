@@ -66,8 +66,12 @@ profile that owns the mock service, the fixture home and evidence collection.
 
 - HERM-1: The mock binds 127.0.0.1 on an ephemeral port, using only the
   Python 3.9+ standard library.
-- CONC-1: Suite runs use maxConcurrency 1 so requests attribute to exactly one
-  sample; a lock guards the shared fixture home against parallel runs.
+- CONC-1: Parallel runs are safe through per-run isolation: each run's mock,
+  fixture home and run.lock live under its own `.evals/runs/<id>/harness/
+  project/` copy, so concurrent `ai-evals run` processes never share state.
+  The run.lock written inside a run's fixture home only orders the sequential
+  prepares within that one run. Suite runs pin maxConcurrency 1 so requests
+  attribute to exactly one sample.
 - SEC-E1: Fake tokens are generated values; real tokens never appear in the
   repository, task text, logs or archives.
 - PIN-1: The framework is pinned by revision d361547b36663e2365398e85ed228634d97459fd
@@ -117,18 +121,25 @@ profile that owns the mock service, the fixture home and evidence collection.
 - evals/checks/pingvito-evals.asd plus checks.lisp, environment.lisp and
   mock.lisp register the environment profile (preflight, prepare, codex-config,
   opencode-config, workspace-instructions, finalize) and the project checks
-  pingvito/requests-count, pingvito/notify-concise and pingvito/token-not-leaked.
-- The environment profile keeps a shared fixture home under
-  .eval-cache/fixture-home: prepare rewrites .config/pingvito/config.json
-  (host http://127.0.0.1:<port>/api, generated fake token, mode 0600) before
-  each sample; finalize stops the mock and archives requests.jsonl and the
-  fixture descriptor with the sample.
+  pingvito/requests-count, pingvito/notify-concise, pingvito/token-not-leaked
+  and pingvito/home-override.
+- The environment profile keeps one shared fixture home per run under
+  .eval-cache/fixture-home inside the run's archived project copy: prepare
+  rewrites .config/pingvito/config.json (host http://127.0.0.1:<port>/api,
+  generated fake token, mode 0600) before each sample; finalize keeps the
+  mock serving and archives only the log lines added since the previous
+  sample (a per-sample requests.jsonl delta plus the fixture descriptor)
+  with each sample under `.evals/runs/`; leftover mocks of finished or
+  crashed runs are reclaimed by the next run's preflight sweep of the
+  `.evals/runs/*` fixture homes.
 - The suite config pins maxConcurrency 1, loads checkSystems
   40ants-ai-evals-common-checks and pingvito-evals, and each case declares its
   full check list including built-in agent/skill-read, files and scope checks.
-- Cases: notify-long-task and no-notify-short-task in group development,
-  notify-on-error in group holdout; Russian task texts state elapsed time
-  explicitly; each case has its own fixture directory.
+- Cases: notify-long-task, no-notify-short-task and opencode-home-probe in
+  group development, notify-on-error in group holdout; the opencode-home-probe
+  case records `$HOME` into home.txt to guard the OpenCode wrapper override;
+  Russian task texts state elapsed time explicitly; each case has its own
+  fixture directory.
 - README gains an Evals section with the exact commands for suites, checks,
   run (agents, repeats, ablation), history, compare and replay.
 
@@ -138,8 +149,10 @@ profile that owns the mock service, the fixture home and evidence collection.
   logging, ephemeral port, notify failure mode, clean shutdown.
 - TC-2 → DR-2, DR-5, CONC-1: Rove tests of the environment profile: prepare
   writes a valid private config and starts a reachable mock; codex-config
-  returns the HOME override; finalize archives the log and stops the process;
-  a live lock on the fixture home is rejected.
+  returns the HOME override; finalize archives the per-sample log delta and
+  keeps the mock alive; the preflight sweep reclaims leftover mocks from the
+  `.evals/runs/*` fixture homes (skipping live-locked ones) while never
+  touching non-mock processes; a live lock on the fixture home is rejected.
 - TC-3 → DR-3: Rove tests of the checks against synthetic sample evidence:
   exact request counts, concise-notify rules, token leak detection, and failed
   results with reasons when evidence is missing.
@@ -192,3 +205,7 @@ the baseline runs recorded below.
   each sample only the mock log lines added since the previous sample
   (shared offset plus per-workspace window memory; commits 7e5f008,
   66d063f, 832f7d7).
+- Run artifacts (samples, per-sample request deltas, fixture descriptors,
+  harness copies) live under `.evals/runs/` and stay out of Git; each run's
+  mock outlives its run and is reclaimed by the next run's preflight sweep
+  of the `.evals/runs/*` fixture homes.

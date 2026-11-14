@@ -13,12 +13,20 @@
 
 ;; The framework prepares every case×agent×variant up front (runner.lisp
 ;; prepare-fixtures) and finalizes each graded sample (collector.lisp), so
-;; one run shares a single mock: the first PREPARE starts it under
-;; <root>/.eval-cache/fixture-home/, same-mode prepares reuse it, and
-;; FINALIZE archives only the log lines added since the previous sample
-;; (a shared offset file attributes requests to samples; maxConcurrency 1
-;; keeps the sample windows disjoint). PREFLIGHT sweeps leftovers of
-;; crashed runs before a fresh run starts.
+;; one run shares a single mock. Runs are isolated from each other: PREPARE
+;; runs with the run's archived project copy as root, so the mock, its
+;; state and run.lock live under .evals/runs/<id>/harness/project/
+;; .eval-cache/fixture-home/ and parallel runs never share them — run.lock
+;; only orders the sequential prepares inside one run. The first PREPARE
+;; starts the run's mock, same-mode prepares reuse it, and FINALIZE
+;; archives only the log lines added since the previous sample (a shared
+;; offset file attributes requests to samples; maxConcurrency 1 keeps the
+;; sample windows disjoint). PREFLIGHT sweeps leftover mocks of crashed
+;; runs out of the live checkout's fixture home and of every .evals/runs/*
+;; fixture home before a fresh run starts; a home whose run.lock is owned
+;; by a live process is skipped, so preflight — which the runner also
+;; invokes mid-run while building the Codex provider — never stops the
+;; current run's own mock.
 
 ;; Mirrors 40ants-ai-evals/util: SBCL's sb-posix provides our own pid.
 (eval-when (:compile-toplevel :load-toplevel :execute) (require :sb-posix))
@@ -74,19 +82,24 @@ CODEX-CONFIG redirect it to the run's archived project copy."
   (zerop (nth-value 2 (run-command (list "kill" "-0" (princ-to-string pid))
                                    :allow-failure t :timeout 10))))
 
+(-> lock-owner ((or null pathname)) (or null integer))
+(defun lock-owner (home)
+  "Pid owning HOME's run.lock, or NIL when absent or unreadable."
+  (let ((lock (at home "run.lock")))
+    (when (probe-file lock)
+      (parse-integer (string-trim '(#\Space #\Newline #\Return)
+                                  (uiop:read-file-string lock :external-format :utf-8))
+                     :junk-allowed t))))
+
 (-> check-lock () t)
 (defun check-lock ()
   "Signal an error when another live process owns the fixture home."
-  (let ((lock (lock-path)))
-    (when (probe-file lock)
-      (let* ((text (string-trim '(#\Space #\Newline #\Return)
-                                (uiop:read-file-string lock :external-format :utf-8)))
-             (owner (parse-integer text :junk-allowed t)))
-        (when (and owner
-                   (not (= owner (sb-posix:getpid)))
-                   (process-alive-p owner))
-          (error "Fixture home ~A is locked by live process ~D"
-                 (namestring (fixture-home)) owner)))))
+  (let ((owner (lock-owner (fixture-home))))
+    (when (and owner
+               (not (= owner (sb-posix:getpid)))
+               (process-alive-p owner))
+      (error "Fixture home ~A is locked by live process ~D"
+             (namestring (fixture-home)) owner)))
   t)
 
 (-> acquire-lock () t)
@@ -96,13 +109,19 @@ CODEX-CONFIG redirect it to the run's archived project copy."
   (ensure-directories-exist (fixture-home))
   (write-text (lock-path) (princ-to-string (sb-posix:getpid))))
 
-(-> read-state () (or null hash-table))
-(defun read-state ()
-  "Read the persisted mock state, tolerating a corrupt or absent file."
-  (let ((file (state-path)))
+(-> read-home-state (pathname) (or null hash-table))
+(defun read-home-state (home)
+  "Read the mock state persisted under HOME, tolerating a corrupt or
+  absent file."
+  (let ((file (at home "mock-state.json")))
     (when (probe-file file)
       (handler-case (read-json file)
         (error () nil)))))
+
+(-> read-state () (or null hash-table))
+(defun read-state ()
+  "Read the persisted mock state of the live fixture home."
+  (read-home-state (fixture-home)))
 
 (-> write-config (integer string) t)
 (defun write-config (port token)
@@ -121,18 +140,19 @@ that omits HOME, so Python's Path.home() would fall back to the real
 user home and notify.py would read the developer's Pingvito config.
 The project opencode.json points the \"shell\" setting at this wrapper:
 it exports HOME at the fixture home (where PREPARE wrote the mock's
-config) plus PYTHONDONTWRITEBYTECODE, then execs zsh with the original
+config) plus PYTHONDONTWRITEBYTECODE, then execs the engine's pinned
+shell (SKILL_EVAL_SHELL, defaulting to /bin/zsh) with the original
 arguments. The wrapper lives beside the mock's state, outside every
 graded workspace, so product-file checks never see it."
   (let ((path (shell-wrapper-path)))
     (write-text path
                 (format nil
                         "#!/bin/sh~%~
-HOME=~A~%~
+HOME=\"~A\"~%~
 export HOME~%~
 PYTHONDONTWRITEBYTECODE=1~%~
 export PYTHONDONTWRITEBYTECODE~%~
-exec /bin/zsh \"$@\"~%"
+exec \"${SKILL_EVAL_SHELL:-/bin/zsh}\" \"$@\"~%"
                         (namestring (fixture-home))))
     (run-command (list "chmod" "755" (namestring path)) :timeout 10)
     path))
@@ -211,7 +231,7 @@ exec /bin/zsh \"$@\"~%"
       ((and live-p (eq running-mode fail-notify))
        (reuse-mock state))
       (live-p
-       (error "Mixed fail-notify modes in one run are unsupported: the shared mock (pid ~D) serves failNotify ~:[false~;true~] while this case requests ~:[false~;true~]; run the holdout case separately with --filter notify-on-error"
+       (error "Mixed fail-notify modes in one run are unsupported: the shared mock (pid ~D) serves failNotify ~:[false~;true~] while this case requests ~:[false~;true~]; run the holdout case separately with --group holdout --filter notify-on-error (or --group all --filter notify-on-error)"
               (field state "pid") running-mode fail-notify))
       (t (start-shared-mock fail-notify)))))
 
@@ -225,41 +245,72 @@ exec /bin/zsh \"$@\"~%"
                                         :allow-failure t :timeout 10))
                           :test #'char=)))))
 
-(-> recorded-mock-pids () list)
-(defun recorded-mock-pids ()
-  "Every pid recorded under the fixture home, including legacy ready files."
+(-> recorded-mock-pids (&optional (or null pathname)) list)
+(defun recorded-mock-pids (&optional (home (fixture-home)))
+  "Every pid recorded under HOME (mock state plus legacy ready files)."
   (let ((pids nil))
-    (let ((state (read-state)))
+    (let ((state (read-home-state home)))
       (when (and state (integerp (field state "pid")))
         (push (field state "pid") pids)))
-    (dolist (file (uiop:directory* (at (fixture-home) "*-ready.json")))
+    (dolist (file (uiop:directory* (at home "*-ready.json")))
       (let ((pid (handler-case (field (read-json file) "pid")
                   (error () nil))))
         (when (integerp pid) (push pid pids))))
     (remove-duplicates pids)))
 
-(-> sweep-fixture-home () t)
-(defun sweep-fixture-home ()
-  "Terminate leftover mocks and delete fixture-home state for a fresh run."
-  (when (uiop:directory-exists-p (fixture-home))
+(-> run-fixture-homes () list)
+(defun run-fixture-homes ()
+  "Fixture homes recorded by archived runs under the project's .evals/runs/.
+
+Each run's PREPARE executes with the run's harnessed project copy as
+root, so a run's mock and its state live under that copy's fixture home
+rather than the live checkout's — this is where leftover mocks are found."
+  (let ((runs (at (root) ".evals/runs/")))
+    (when (uiop:directory-exists-p runs)
+      (loop for run in (uiop:subdirectories runs)
+            for home = (at run "harness/project/.eval-cache/fixture-home/")
+            when (uiop:directory-exists-p home)
+              collect home))))
+
+(-> sweep-home (pathname) t)
+(defun sweep-home (home)
+  "Terminate HOME's leftover mock and delete its fixture-home state."
+  (when (uiop:directory-exists-p home)
     ;; Only processes actually running the fixture server are signalled,
     ;; so a recycled pid recorded by an ancient run is never harmed.
-    (dolist (pid (recorded-mock-pids))
+    (dolist (pid (recorded-mock-pids home))
       (when (mock-process-p pid)
         (stop-mock pid)))
-    (dolist (path (list (at (fixture-home) "logs/")
-                        (at (fixture-home) ".config/")))
+    (dolist (path (list (at home "logs/")
+                        (at home ".config/")))
       (when (uiop:directory-exists-p path)
         (remove-directory path)))
-    (dolist (file (append (list (state-path) (offset-path (fixture-home))
-                                (archives-file (fixture-home)))
-                          (uiop:directory* (at (fixture-home) "*-ready.json"))))
+    (dolist (file (append (list (at home "mock-state.json") (offset-path home)
+                                (archives-file home))
+                          (uiop:directory* (at home "*-ready.json"))))
       (when (probe-file file) (delete-file file))))
+  t)
+
+(-> sweep-fixture-home () t)
+(defun sweep-fixture-home ()
+  "Terminate leftover mocks and delete fixture-home state for a fresh run.
+
+The live checkout's fixture home is swept together with the fixture home
+of every archived run under .evals/runs/, where each run's mock actually
+lives. A per-run home whose run.lock is owned by a live process is left
+untouched: preflight also runs mid-run (the runner builds the Codex
+provider after prepare), and that run's own mock must keep serving its
+samples."
+  (sweep-home (fixture-home))
+  (dolist (home (run-fixture-homes))
+    (let ((owner (lock-owner home)))
+      (unless (and owner (process-alive-p owner))
+        (sweep-home home))))
   t)
 
 (-> preflight (t &key (:check-tools t)) hash-table)
 (defun preflight (profile &key check-tools)
-  "Guard against parallel runs and reset the fixture home before a run."
+  "Reset fixture state before a run and refuse a live foreign lock."
   (declare (ignore profile check-tools))
   (check-lock)
   (let ((version (string-trim '(#\Space #\Newline #\Return)
