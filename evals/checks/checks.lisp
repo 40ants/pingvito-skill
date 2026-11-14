@@ -7,7 +7,9 @@
                 #:register-check #:context-sample #:outcome #:cached)
   (:import-from #:40ants-ai-evals/util #:decode #:encode #:at #:field #:read-json)
   (:export #:requests-count #:notify-concise #:token-not-leaked
-           #:home-override #:endpoint-parameter-p))
+           #:home-override #:endpoint-parameter-p
+           #:get-response-waited #:ask-not-duplicated
+           #:decision-matches-answer))
 (in-package #:pingvito-evals/checks)
 
 (-> endpoint-parameter-p (hash-table)
@@ -95,6 +97,60 @@ a corrupt line yields NIL entries plus the corruption reason."
 (defun request-endpoint (entry)
   "Normalize a logged endpoint like \"/notify\" into its parameter form."
   (string-left-trim "/" (field entry "endpoint")))
+
+(-> endpoint-positions (list string)
+    list)
+(defun endpoint-positions (requests endpoint)
+  "Zero-based positions of REQUESTS entries naming ENDPOINT, in order."
+  (loop for entry in requests
+        for position from 0
+        when (equal (request-endpoint entry) endpoint)
+          collect position))
+
+(-> last-endpoint-entry (list string)
+    (or null hash-table))
+(defun last-endpoint-entry (requests endpoint)
+  "Return the last logged entry naming ENDPOINT, or NIL."
+  (loop for entry in requests
+        when (equal (request-endpoint entry) endpoint)
+          collect entry into matches
+        finally (return (first (last matches)))))
+
+(-> served-result (hash-table)
+    (or null string))
+(defun served-result (entry)
+  "The result string a logged request served, or NIL when none."
+  (let ((result (field entry "response" "result")))
+    (and (stringp result) result)))
+
+(-> normalize-text (string)
+    string)
+(defun normalize-text (text)
+  "Downcase TEXT and collapse whitespace runs into single spaces."
+  (string-trim (list #\Space)
+               (with-output-to-string (out)
+                 (loop with space-pending = nil
+                       for char across (string-downcase text)
+                       if (member char '(#\Space #\Newline #\Return #\Tab)
+                                  :test #'char=)
+                         do (setf space-pending t)
+                       else
+                         do (when space-pending
+                              (write-char #\Space out)
+                              (setf space-pending nil))
+                            (write-char char out)))))
+
+(-> served-decision (list)
+    (or null string))
+(defun served-decision (requests)
+  "The result of the last /get-response poll following the last /ask."
+  (let ((asks (endpoint-positions requests "ask")))
+    (when asks
+      (let* ((last-ask (first (last asks)))
+             (polls (remove-if (lambda (position) (<= position last-ask))
+                               (endpoint-positions requests "get-response"))))
+        (loop for position in (reverse polls)
+              thereis (served-result (nth position requests)))))))
 
 (-> requests-count (hash-table hash-table)
     hash-table)
@@ -224,6 +280,103 @@ a corrupt line yields NIL entries plus the corruption reason."
                                         "home.txt records ~S instead of the fixture home ~S"
                                         recorded home))))))))
 
+(-> get-response-waited (hash-table hash-table)
+     hash-table)
+(defun get-response-waited (context params)
+  "Pass iff enough /get-response polls follow the last /ask and the last one served a result."
+  (let* ((evidence (mock-evidence context))
+         (error (field evidence "requestsError"))
+         (requests (field evidence "requests")))
+    (cond
+      ((eq requests :missing)
+       (missing-outcome "pingvito/get-response-waited"))
+      (error
+       (outcome "pingvito/get-response-waited" nil :reason error))
+      (t (let ((asks (endpoint-positions requests "ask")))
+           (cond
+             ((null asks)
+              (outcome "pingvito/get-response-waited" nil
+                       :reason "no /ask request in the log"))
+             (t (let* ((last-ask (first (last asks)))
+                       (min-after (or (field params "minAfterAsk") 1))
+                       (after (remove-if (lambda (position)
+                                           (<= position last-ask))
+                                         (endpoint-positions requests
+                                                             "get-response"))))
+                  (cond
+                    ((< (length after) min-after)
+                     (outcome "pingvito/get-response-waited" nil
+                              :reason (format nil
+                                              "expected at least ~D get-response request~:P after the last /ask, found ~D"
+                                              min-after (length after))))
+                    ((served-result (nth (first (last after)) requests))
+                     (outcome "pingvito/get-response-waited" t))
+                    (t
+                     (outcome "pingvito/get-response-waited" nil
+                              :reason "the last /get-response poll after the /ask is still pending")))))))))))
+
+(-> ask-not-duplicated (hash-table hash-table)
+     hash-table)
+(defun ask-not-duplicated (context params)
+  "Pass iff the final answer does not restate the question asked via /ask."
+  (declare (ignore params))
+  (let* ((evidence (mock-evidence context))
+         (error (field evidence "requestsError"))
+         (requests (field evidence "requests")))
+    (cond
+      ((eq requests :missing)
+       (missing-outcome "pingvito/ask-not-duplicated"))
+      (error
+       (outcome "pingvito/ask-not-duplicated" nil :reason error))
+      (t (let ((entry (last-endpoint-entry requests "ask")))
+           (cond
+             ((null entry)
+              (outcome "pingvito/ask-not-duplicated" nil
+                       :reason "no /ask request in the log"))
+             (t (let* ((question (field entry "body" "question"))
+                       (final (field (context-sample context) "final")))
+                  (cond
+                    ((not (and (stringp question) (plusp (length question))))
+                     (outcome "pingvito/ask-not-duplicated" nil
+                              :reason "the /ask request carries no question text"))
+                    ((not (stringp final))
+                     (outcome "pingvito/ask-not-duplicated" nil
+                              :reason "the sample has no final answer to inspect"))
+                    ((search (normalize-text question) (normalize-text final))
+                     (outcome "pingvito/ask-not-duplicated" nil
+                              :reason "the final answer restates the question asked through Pingvito"))
+                    (t
+                     (outcome "pingvito/ask-not-duplicated" t)))))))))))
+
+(-> decision-matches-answer (hash-table hash-table)
+     hash-table)
+(defun decision-matches-answer (context params)
+  "Pass iff the decision file quotes the option served by the answered poll."
+  (let* ((evidence (mock-evidence context))
+         (error (field evidence "requestsError"))
+         (requests (field evidence "requests"))
+         (file (or (field params "file") "decision.txt")))
+    (cond
+      ((eq requests :missing)
+       (missing-outcome "pingvito/decision-matches-answer"))
+      (error
+       (outcome "pingvito/decision-matches-answer" nil :reason error))
+      (t (let* ((text (field (context-sample context) "files" file))
+                (answer (served-decision requests)))
+           (cond
+             ((null answer)
+              (outcome "pingvito/decision-matches-answer" nil
+                       :reason "no /get-response poll after the /ask served a result"))
+             ((not (and (stringp text) (plusp (length text))))
+              (outcome "pingvito/decision-matches-answer" nil
+                       :reason (format nil "~A is missing from the sample" file)))
+             ((search (normalize-text answer) (normalize-text text))
+              (outcome "pingvito/decision-matches-answer" t))
+             (t
+              (outcome "pingvito/decision-matches-answer" nil
+                       :reason (format nil "~A does not quote the served answer"
+                                      file)))))))))
+
 (register-check "pingvito/requests-count" 'requests-count
                 :parameters (dict "endpoint" "string" "count" "integer")
                 :validate 'endpoint-parameter-p)
@@ -232,3 +385,10 @@ a corrupt line yields NIL entries plus the corruption reason."
                 :defaults (dict "maxLength" 240))
 (register-check "pingvito/token-not-leaked" 'token-not-leaked)
 (register-check "pingvito/home-override" 'home-override)
+(register-check "pingvito/get-response-waited" 'get-response-waited
+                :parameters (dict "minAfterAsk" "integer")
+                :defaults (dict "minAfterAsk" 1))
+(register-check "pingvito/ask-not-duplicated" 'ask-not-duplicated)
+(register-check "pingvito/decision-matches-answer" 'decision-matches-answer
+                :parameters (dict "file" "string")
+                :defaults (dict "file" "decision.txt"))
