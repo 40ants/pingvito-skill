@@ -253,6 +253,12 @@ the baseline runs recorded below.
   evaluation timeout while waiting — waiting agents must finish well
   inside it. This is the failing baseline the SKILL.md waiting recipe
   (specs/system.spec.md DR-4, DL-3) is written against.
+- GREEN for the skill fix, run `2026-11-14T17-35-21-479586Z-5012e6`
+  (skill-fix-ask, both agents, repeat 3): 6/6 passed, zero assertion
+  failures, zero timeouts. Every sample waited with the recipe's
+  sleep-polling loop (several copy the `for attempt in $(seq 1 20)`
+  form verbatim), so the RED→GREEN pair validates both the eval's
+  sensitivity and the recipe.
 - Ablation leakiness: the workspace ships the repository copy, so
   `.apm/skills/pingvito/` and the AGENTS.md announcement ("Pingvito
   настроен") remain reachable without the installed skill; two of six
