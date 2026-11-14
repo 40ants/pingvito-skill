@@ -202,6 +202,34 @@ the baseline runs recorded below.
 
 ### Evidence — 2026-11-14
 
+- Offline suites green: `python3 -m unittest discover -s tests -v` — 22/22
+  tests; `qlot exec ai-evals test` — 2 test systems (environment, checks),
+  208 passing assertions, 0 failures. `ai-evals checks --suite pingvito`
+  validates the three new check schemas.
+- ask-waiting baseline `baseline-ask` run `2026-11-14T09-20-38-124500Z-2654a8`
+  (Codex gpt-6-sol + OpenCode glm-5.3, repeat 3, ablation): 6 passed, 5
+  failed, 1 provider error. With-skill arm: OpenCode 2/3 — the failing
+  sample restated the asked question in its final answer, the exact bug
+  this case targets; Codex effectively 3/3 — its one "found 2 ask
+  requests" failure is window contamination, not agent behavior (see
+  below). Passing agents tight-polled `get-response` without pauses: the
+  call-count pending countdown makes waiting cheap, so this case grades
+  the re-asking modes, not real patience.
+- Framework bug exposed (pinned revision d361547): `skill-call-p` in
+  src/providers/opencode.lisp declares a boolean return but its `read`
+  branch returns `search`'s integer index; a without-skill agent that
+  reads the SKILL.md file crashes the OpenCode provider ("The value 54 is
+  not of type BOOLEAN"). The crashed sample's mock lines then leak into
+  the next sample's archived window (the neighboring with-skill sample
+  graded 2 asks instead of its own 1). Needs an upstream fix; re-running
+  the affected pair is the local workaround.
+- Ablation leakiness: the workspace ships the repository copy, so
+  `.apm/skills/pingvito/` and the AGENTS.md announcement ("Pingvito
+  настроен") remain reachable without the installed skill; two of six
+  without-skill samples passed by discovering the scripts themselves.
+  Grade this case from the with-skill arm; `--ablation` on it measures
+  repo self-documentation, not the skill.
+
 - Offline suites green: `python3 -m unittest discover -s tests -v` — 17/17
   tests; `qlot exec ai-evals test` — 2 test systems (environment, checks),
   155 assertions, 0 failures.
