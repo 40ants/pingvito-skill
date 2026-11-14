@@ -31,12 +31,13 @@
 ;; Mirrors 40ants-ai-evals/util: SBCL's sb-posix provides our own pid.
 (eval-when (:compile-toplevel :load-toplevel :execute) (require :sb-posix))
 
-(defparameter *answer-delay* 60
+(defparameter *answer-delay* 180
   "Wall-clock seconds the mock holds a served answer after each /ask.
 
 Every run passes this to the shared mock uniformly, so ask-waiting samples
-grade real patience — sleeping between polls — instead of tight polling,
-and no new run-grouping restriction appears alongside failNotify.")
+grade real patience — sleeping between polls long enough for a human to
+answer in MAX — instead of tight polling or model-latency spacing, and no
+new run-grouping restriction appears alongside failNotify.")
 
 (-> fixture-home (&optional (or null pathname)) pathname)
 (defun fixture-home (&optional project-root)

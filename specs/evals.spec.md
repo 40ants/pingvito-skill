@@ -79,7 +79,7 @@ profile that owns the mock service, the fixture home and evidence collection.
 - ASK-1 (2026-11-14; updated same day): After a well-formed /ask the mock
   serves {"status": "pending"} until two gates open: --pending-responses
   polls (default 2) have been served AND --answer-delay seconds (the
-  environment's uniform *answer-delay*, 60 by default) have elapsed since
+  environment's uniform *answer-delay*, 180 by default) have elapsed since
   the ask; it then returns {"result": <last option of that ask>}. A new
   /ask restarts both gates and the state is tracked per token. One run
   serves every sample through a single shared token, so cross-sample
