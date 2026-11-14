@@ -79,9 +79,12 @@ profile that owns the mock service, the fixture home and evidence collection.
 - ASK-1 (2026-11-14): After a well-formed /ask the mock serves
   {"status": "pending"} for --pending-responses /get-response polls
   (default 2) and then {"result": <last option of that ask>}; a new /ask
-  restarts the countdown and the state is tracked per token, so sequential
-  samples sharing the run token never inherit stale answers. Answering with
-  the last option stops agents from assuming the first button.
+  restarts the countdown and the state is tracked per token. One run serves
+  every sample through a single shared token, so cross-sample safety rests
+  on the countdown reset of each new ask (a sample polling before its own
+  ask inherits the previous countdown — unreachable in the with-skill arm).
+  Answering with the last option stops agents from assuming the first
+  button.
 - CONC-1: Parallel runs are safe through per-run isolation: each run's mock,
   fixture home and run.lock live under its own `.evals/runs/<id>/harness/
   project/` copy, so concurrent `ai-evals run` processes never share state.
@@ -124,9 +127,11 @@ profile that owns the mock service, the fixture home and evidence collection.
   agents grade.
 - DL-6 (2026-11-14): The ask-waiting deliverable is graded against the option
   the mock actually served (pingvito/decision-matches-answer), not against a
-  hardcoded APPLY/DEFER marker, so the agent's option wording and ordering
-  cannot cause false failures; the mock answers with the last option after
-  the pending countdown (ASK-1) so assuming the first button also fails.
+  hardcoded APPLY/DEFER marker, so the agent's option ordering cannot cause
+  false failures; the mock answers with the last option after the pending
+  countdown (ASK-1) so assuming the first button also fails. The option must
+  be quoted as whole words: a paraphrase («Отложено» instead of «Отложить»)
+  fails, which the task text rules out by asking for the variant verbatim.
 
 ## § Tech Spec
 
@@ -208,13 +213,16 @@ the baseline runs recorded below.
   validates the three new check schemas.
 - ask-waiting baseline `baseline-ask` run `2026-11-14T09-20-38-124500Z-2654a8`
   (Codex gpt-6-sol + OpenCode glm-5.3, repeat 3, ablation): 6 passed, 5
-  failed, 1 provider error. With-skill arm: OpenCode 2/3 — the failing
-  sample restated the asked question in its final answer, the exact bug
-  this case targets; Codex effectively 3/3 — its one "found 2 ask
-  requests" failure is window contamination, not agent behavior (see
-  below). Passing agents tight-polled `get-response` without pauses: the
-  call-count pending countdown makes waiting cheap, so this case grades
-  the re-asking modes, not real patience.
+  failed, 1 provider error. With-skill arm: all six samples behaved
+  correctly — every agent asked once, polled to the served result and
+  recorded it; the two graded failures were check false positives fixed
+  afterwards (see below), not agent behavior. The user-reported failure
+  did not reproduce under this formulation: the two-pending countdown
+  makes waiting cheap, and passing agents tight-polled `get-response`
+  without pauses, so this case grades the re-asking modes (no polling,
+  double ask, re-ask without the answer), not real patience. A wall-clock
+  pending delay is the documented escalation if the skill fix needs a
+  stricter gate.
 - Framework bug exposed (pinned revision d361547): `skill-call-p` in
   src/providers/opencode.lisp declares a boolean return but its `read`
   branch returns `search`'s integer index; a without-skill agent that
@@ -223,6 +231,13 @@ the baseline runs recorded below.
   the next sample's archived window (the neighboring with-skill sample
   graded 2 asks instead of its own 1). Needs an upstream fix; re-running
   the affected pair is the local workaround.
+- Check false positives found in the baseline and fixed by commit 713ade6:
+  the OpenCode with-skill sample graded "restates the question" was a
+  compliant agent quoting the question in its report while also reporting
+  the answer (the check now passes such finals and only fails re-asks
+  without the answer), and option matching moved from raw substrings to
+  whole-token phrases so short options hidden inside other words no
+  longer pass.
 - Ablation leakiness: the workspace ships the repository copy, so
   `.apm/skills/pingvito/` and the AGENTS.md announcement ("Pingvito
   настроен") remain reachable without the installed skill; two of six
