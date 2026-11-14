@@ -241,6 +241,18 @@ the baseline runs recorded below.
   without the answer), and option matching moved from raw substrings to
   whole-token phrases so short options hidden inside other words no
   longer pass.
+- RED for the skill fix, runs of 2026-11-14: with a 60-second window
+  (run `2026-11-14T15-22-23-763503Z-7a9b40`) all six with-skill samples
+  still passed — two by tight polling that the model's own inference
+  latency spaced past the gate — so the window rose to three minutes
+  (commit 08cdc88). Run `2026-11-14T15-34-49-211435Z-a8d21d`
+  (baseline-ask-delayed180) reproduced the reported bug on Codex: 1/3
+  passed; both failing samples polled in a sleepless burst, gave up while
+  the choice was still pending, and re-asked the question with its
+  options in the final chat answer. One OpenCode sample hit the 660-second
+  evaluation timeout while waiting — waiting agents must finish well
+  inside it. This is the failing baseline the SKILL.md waiting recipe
+  (specs/system.spec.md DR-4, DL-3) is written against.
 - Ablation leakiness: the workspace ships the repository copy, so
   `.apm/skills/pingvito/` and the AGENTS.md announcement ("Pingvito
   настроен") remain reachable without the installed skill; two of six

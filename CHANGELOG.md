@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Store personal configuration in `~/.config/pingvito/config.json`.
+- Wait for MAX question answers by polling `get-response` with pauses in a
+  bounded loop; while a question is pending it is not re-asked in the
+  assistant chat, and the assistant chat is not an answer channel for it.
 
 ## 0.1.0 — 2026-10-05
 

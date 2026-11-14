@@ -84,14 +84,25 @@ When a decision is needed and answers form a finite list, send a button question
 python3 "$SKILL_DIR/scripts/notify.py" ask 'Deploy the change?' 'Deploy' 'Do not deploy'
 ```
 
-Read the selected option:
+The answer arrives only through `get-response`; the assistant chat is not an
+answer channel for a question already sent to MAX. A person needs minutes to
+answer, so wait by polling with pauses — never with a tight burst of calls.
+Scale the interval and attempts to the task; this loop waits up to ten minutes:
 
 ```sh
-python3 "$SKILL_DIR/scripts/notify.py" get-response
+for attempt in $(seq 1 20); do
+  answer=$(python3 "$SKILL_DIR/scripts/notify.py" get-response 2>/dev/null) && break
+  sleep 30
+done
+printf '%s\n' "$answer"
 ```
 
-Exit `0` prints the selected option. Exit `2` means the choice is still pending;
-it is not approval. Exit `1` reports an error. Wait for a bounded period suited
-to the task, then return to the user in chat if necessary. Free-form MAX answers
-are not supported. Each token has one latest question, so avoid concurrent
-questions using the same token.
+Exit `0` prints the selected option: act on exactly that text. Exit `2` means
+the choice is still pending — it is not approval and not a signal that nobody
+will answer; sleep and poll again. Exit `1` reports an error.
+
+While the question is pending, do not ask it again anywhere: no second Pingvito
+ask, and no repeating the question or its options in the assistant chat. If the
+wait bound expires with no answer, state that the choice is waiting in MAX and
+end the turn. Free-form MAX answers are not supported. Each token has one
+latest question, so avoid concurrent questions using the same token.

@@ -9,7 +9,7 @@ actors: [User, AI Assistant]
 emits: [Notification delivered, Question answered]
 consumes: [Task completed, User decision needed]
 created: 2026-10-04
-updated: 2026-10-05
+updated: 2026-11-14
 ---
 
 ## § Intent
@@ -22,6 +22,9 @@ when the User needs to choose how work should continue.
 - DR-1: Completion notifications describe the actual outcome at a stopping point.
 - DR-2: Interactive questions accept an explicit user choice; pending is not approval.
 - DR-3: Personal credentials stay outside the distributed skill and its diagnostics.
+- DR-4: A question sent to MAX is answered through MAX: while it is pending, the
+  assistant waits by polling get-response with pauses and does not re-ask the
+  question in the assistant chat.
 
 ## § Acceptance Criteria
 
@@ -35,6 +38,8 @@ Scenario: Await a user decision
   Given the AI Assistant needs a choice from the User
   When the User has not selected an option yet
   Then dependent work does not treat that pending choice as approval
+    And the AI Assistant keeps polling get-response with pauses
+    And it does not repeat the question in the assistant chat
 ```
 
 ## § Domain Model Touch
@@ -54,6 +59,11 @@ None.
 
 - DL-1 (2026-10-04): Extract the existing max-notifier skill under the Pingvito name.
 - DL-2 (2026-10-04): Distribution is owned by PINGVITO-SKILL-DIST-001.
+- DL-3 (2026-11-14): Prescribe a bounded sleep-polling loop for reading the
+  answer and close the old escape hatch of returning the question to the
+  chat. Eval run baseline-ask-delayed180 showed Codex re-asking the options
+  in chat after a sleepless poll burst when the answer was held three
+  minutes; the recipe and the chat re-ask prohibition target that failure.
 
 ## § Tech Spec
 
