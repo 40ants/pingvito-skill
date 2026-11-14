@@ -144,6 +144,49 @@ class MockServerTests(unittest.TestCase):
         _, body = self.poll()
         self.assertEqual(body, {"result": "Hold"})
 
+    def test_answer_delay_holds_the_result_until_elapsed(self):
+        self.start_server("--answer-delay", "1")
+        started = time.monotonic()
+        self.ask(options=("Deploy", "Hold"))
+        # The countdown alone no longer releases the answer.
+        for _ in range(3):
+            _, body = self.poll()
+            self.assertEqual(body, {"status": "pending"})
+        # Once the delay since the ask has elapsed, the answer is served.
+        remaining = 1.0 - (time.monotonic() - started)
+        if remaining > 0:
+            time.sleep(remaining + 0.05)
+        _, body = self.poll()
+        self.assertEqual(body, {"result": "Hold"})
+
+    def test_answer_delay_zero_keeps_countdown_behavior(self):
+        self.start_server()
+        self.ask(options=("Deploy", "Hold"))
+        for expected in ({"status": "pending"}, {"status": "pending"}):
+            _, body = self.poll()
+            self.assertEqual(body, expected)
+        _, body = self.poll()
+        self.assertEqual(body, {"result": "Hold"})
+
+    def test_new_ask_restarts_the_delay_window(self):
+        self.start_server("--answer-delay", "1")
+        started = time.monotonic()
+        self.ask(options=("Deploy", "Hold"))
+        for _ in range(3):
+            _, body = self.poll()
+            self.assertEqual(body, {"status": "pending"})
+        remaining = 1.0 - (time.monotonic() - started)
+        if remaining > 0:
+            time.sleep(remaining + 0.05)
+        # A repeated ask restarts both the countdown and the delay window.
+        self.ask(options=("Ship", "Ditch"))
+        for _ in range(3):
+            _, body = self.poll()
+            self.assertEqual(body, {"status": "pending"})
+        time.sleep(1.05)
+        _, body = self.poll()
+        self.assertEqual(body, {"result": "Ditch"})
+
     def test_ask_state_is_tracked_per_token(self):
         self.start_server()
         self.ask(token=TOKEN, options=("Deploy", "Hold"))

@@ -11,10 +11,11 @@ accepted and stripped: {"endpoint": "/notify", "status": 200,
 "body": {...}, "response": {...}} where "response" is the served payload.
 
 /get-response answers {"status": "pending"} for a token with no preceding
-/ask; after an /ask it stays pending for --pending-responses polls
-(default 2) and then returns {"result": <last option of that ask>}, so a
-compliant client must keep polling instead of assuming the first option.
-A new /ask restarts the countdown. Ask state is tracked per token.
+/ask; after an /ask it stays pending until both gates open: --pending-responses
+polls (default 2) have been served AND --answer-delay seconds (default 0)
+have elapsed since that ask. It then returns {"result": <last option of the
+ask>}, so a compliant client must keep polling instead of assuming the
+first option. A new /ask restarts both gates. Ask state is per token.
 """
 
 import argparse
@@ -22,6 +23,7 @@ import json
 import os
 import signal
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -30,15 +32,20 @@ ENDPOINTS = ("/notify", "/ask", "/get-response")
 
 
 class MockAskState:
-    """Thread-safe per-token countdown of pending polls after each /ask."""
+    """Thread-safe per-token gate keeping served polls after each /ask.
 
-    def __init__(self, pending_responses):
+    An answer is released only after the ask has been answered with
+    PENDING_RESPONSES polls and ANSWER_DELAY seconds have passed since it
+    was recorded."""
+
+    def __init__(self, pending_responses, answer_delay):
         self.pending_responses = pending_responses
+        self.answer_delay = answer_delay
         self._lock = threading.Lock()
         self._asks = {}
 
     def record_ask(self, body):
-        """Seed or restart a token's countdown from a well-formed /ask body."""
+        """Seed or restart a token's gates from a well-formed /ask body."""
         if not isinstance(body, dict):
             return
         token = body.get("token")
@@ -49,10 +56,11 @@ class MockAskState:
             return
         with self._lock:
             self._asks[token] = {"options": list(options),
-                                 "pending": self.pending_responses}
+                                 "pending": self.pending_responses,
+                                 "asked_at": time.monotonic()}
 
     def answer(self, body):
-        """Serve one /get-response poll, consuming the token's countdown."""
+        """Serve one /get-response poll, consuming the token's gates."""
         token = body.get("token") if isinstance(body, dict) else None
         with self._lock:
             state = self._asks.get(token) if isinstance(token, str) else None
@@ -60,6 +68,8 @@ class MockAskState:
                 return {"status": "pending"}
             if state["pending"] > 0:
                 state["pending"] -= 1
+                return {"status": "pending"}
+            if time.monotonic() - state["asked_at"] < self.answer_delay:
                 return {"status": "pending"}
             return {"result": state["options"][-1]}
 
@@ -130,6 +140,9 @@ def main(argv=None):
     parser.add_argument("--pending-responses", type=int, default=2, metavar="N",
                         help="number of pending /get-response polls served "
                              "after each /ask before the answer (default: 2)")
+    parser.add_argument("--answer-delay", type=float, default=0.0, metavar="SECONDS",
+                        help="wall-clock seconds after each /ask before the "
+                             "answer is released (default: 0)")
     args = parser.parse_args(argv)
 
     log_path, ready_path = Path(args.log), Path(args.ready)
@@ -140,7 +153,7 @@ def main(argv=None):
     server.log_path = log_path
     server.log_lock = threading.Lock()
     server.fail_notify = args.fail_notify
-    server.ask_state = MockAskState(args.pending_responses)
+    server.ask_state = MockAskState(args.pending_responses, args.answer_delay)
 
     # The socket already listens after construction, so the ready file is
     # safe to publish before the first request is served.

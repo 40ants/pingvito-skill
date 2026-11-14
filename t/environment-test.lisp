@@ -6,7 +6,7 @@
   (:import-from #:rove #:deftest #:ok #:ng #:signals)
   (:import-from #:dexador)
   (:import-from #:pingvito-evals/mock #:start-mock #:stop-mock)
-  (:import-from #:pingvito-evals/environment #:fixture-home)
+  (:import-from #:pingvito-evals/environment #:fixture-home #:*answer-delay*)
   (:import-from #:40ants-ai-evals/util
                 #:*project-root* #:at #:decode #:field #:json-equal-p #:true-p
                 #:read-json #:write-json #:write-text #:temporary-directory
@@ -105,6 +105,9 @@
              (ok (uiop:string-prefix-p "evals-" (field descriptor "token")))
              (ok (< (length "evals-") (length (field descriptor "token"))))
              (ok (eq 'yason:false (field descriptor "failNotify")))
+             ;; Every mock holds served answers for a wall-clock window so
+             ;; ask-waiting samples grade real patience, not tight polling.
+             (ok (equal *answer-delay* (field descriptor "answerDelay")))
              ;; The framework persists the descriptor inside the workspace.
              (ok (probe-file (at workspace ".eval-fixture.json")))
              ;; The fake Pingvito config points at the running mock, and the
