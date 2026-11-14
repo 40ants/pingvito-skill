@@ -76,15 +76,18 @@ profile that owns the mock service, the fixture home and evidence collection.
 
 - HERM-1: The mock binds 127.0.0.1 on an ephemeral port, using only the
   Python 3.9+ standard library.
-- ASK-1 (2026-11-14): After a well-formed /ask the mock serves
-  {"status": "pending"} for --pending-responses /get-response polls
-  (default 2) and then {"result": <last option of that ask>}; a new /ask
-  restarts the countdown and the state is tracked per token. One run serves
-  every sample through a single shared token, so cross-sample safety rests
-  on the countdown reset of each new ask (a sample polling before its own
-  ask inherits the previous countdown — unreachable in the with-skill arm).
-  Answering with the last option stops agents from assuming the first
-  button.
+- ASK-1 (2026-11-14; updated same day): After a well-formed /ask the mock
+  serves {"status": "pending"} until two gates open: --pending-responses
+  polls (default 2) have been served AND --answer-delay seconds (the
+  environment's uniform *answer-delay*, 60 by default) have elapsed since
+  the ask; it then returns {"result": <last option of that ask>}. A new
+  /ask restarts both gates and the state is tracked per token. One run
+  serves every sample through a single shared token, so cross-sample
+  safety rests on the gate reset of each new ask (a sample polling before
+  its own ask inherits the previous gates — unreachable in the with-skill
+  arm). Answering with the last option stops agents from assuming the
+  first button; the wall-clock window makes waiting cost real sleeps
+  instead of tight polling.
 - CONC-1: Parallel runs are safe through per-run isolation: each run's mock,
   fixture home and run.lock live under its own `.evals/runs/<id>/harness/
   project/` copy, so concurrent `ai-evals run` processes never share state.
