@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "defaultSuite": "pingvito",
+  "suiteCatalog": "evals/suites.json",
+  "systems": [
+    {
+      "system": "pingvito-evals",
+      "asd": "evals/checks/pingvito-evals.asd"
+    }
+  ],
+  "testSystem": "pingvito-evals-tests",
+  "snapshotPaths": ["evals/", "qlfile", "qlfile.lock", "shell.nix"]
+}

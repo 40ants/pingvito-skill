@@ -1,0 +1,77 @@
+[
+  {
+    "description": "notify-long-task: одно уведомление после долгой работы",
+    "vars": {
+      "id": "notify-long-task",
+      "group": "development",
+      "task": "Используй навык pingvito. Ты автономно работаешь над этой задачей уже 12 минут (от начала работы до сейчас прошло 12 минут). Заверши работу: в calc.py исправь функцию divide (она должна возвращать a / b), затем запиши краткий итог работы (2–3 предложения) в report.txt, первой строкой — «Итог:».",
+      "fixtures": "cases/notify-long-task/fixtures/",
+      "outputFile": "report.txt",
+      "fixedFile": "calc.py",
+      "fixedText": "a / b",
+      "checks": [
+        {"check": "agent/skill-read", "params": {"expected": true}},
+        {"check": "pingvito/requests-count", "params": {"endpoint": "notify", "count": 1}},
+        {"check": "pingvito/notify-concise", "params": {"maxLength": 240}},
+        {"check": "pingvito/token-not-leaked"},
+        {"check": "files/text-contains", "params": {"file": {"$var": "fixedFile"}, "contains": {"$var": "fixedText"}}},
+        {"check": "files/text-contains", "params": {"file": "report.txt", "contains": "Итог:"}},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": {"$var": "outputFile"}, "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  },
+  {
+    "description": "no-notify-short-task: тишина при короткой задаче",
+    "vars": {
+      "id": "no-notify-short-task",
+      "group": "development",
+      "task": "Исправь в README.md опечатку: замени «Tehg» на «Тех». Это небольшая правка, на неё ушло меньше минуты.",
+      "fixtures": "cases/no-notify-short-task/fixtures/",
+      "checks": [
+        {"check": "pingvito/requests-count", "params": {"endpoint": "any", "count": 0}},
+        {"check": "pingvito/token-not-leaked"},
+        {"check": "files/text-contains", "params": {"file": "README.md", "contains": "Тех"}},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": "README.md", "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  },
+  {
+    "description": "opencode-home-probe: shell-обёртка экспортирует fixture HOME",
+    "vars": {
+      "id": "opencode-home-probe",
+      "group": "development",
+      "task": "Выполни в терминале команду: echo \"$HOME\" > home.txt — и заверши работу.",
+      "fixtures": "cases/opencode-home-probe/fixtures/",
+      "checks": [
+        {"check": "files/text-contains", "params": {"file": "home.txt", "contains": ".eval-cache/fixture-home"}},
+        {"check": "pingvito/home-override"},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": "home.txt", "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  },
+  {
+    "description": "notify-on-error: одно уведомление при сбое сервиса",
+    "vars": {
+      "id": "notify-on-error",
+      "group": "holdout",
+      "task": "Используй навык pingvito. Ты автономно работаешь над этой задачей уже 15 минут. Заверши работу: в calc.py исправь функцию multiply (она должна возвращать a * b), затем запиши краткий итог (2–3 предложения) в report.txt, первой строкой — «Итог:».",
+      "fixtures": "cases/notify-on-error/fixtures/",
+      "outputFile": "report.txt",
+      "fixedFile": "calc.py",
+      "fixedText": "a * b",
+      "failNotify": true,
+      "checks": [
+        {"check": "agent/skill-read", "params": {"expected": true}},
+        {"check": "pingvito/requests-count", "params": {"endpoint": "notify", "count": 1}},
+        {"check": "pingvito/token-not-leaked"},
+        {"check": "files/text-contains", "params": {"file": {"$var": "fixedFile"}, "contains": {"$var": "fixedText"}}},
+        {"check": "files/text-contains", "params": {"file": "report.txt", "contains": "Итог:"}},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": {"$var": "outputFile"}, "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  }
+]

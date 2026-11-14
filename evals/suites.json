@@ -1,0 +1,9 @@
+[
+  {
+    "id": "pingvito",
+    "skillName": "pingvito",
+    "skillPath": ".apm/skills/pingvito/",
+    "environmentProfile": "pingvito",
+    "config": "evals/pingvito/promptfooconfig.json"
+  }
+]

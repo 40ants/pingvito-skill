@@ -1,0 +1,16 @@
+{
+  "description": "Pingvito skill behavior evaluation",
+  "defaultTest": {
+    "vars": {
+      "checkSystems": [
+        {"system": "40ants-ai-evals-common-checks"},
+        {"system": "pingvito-evals", "asd": "evals/checks/pingvito-evals.asd"}
+      ],
+      "checks": [
+        {"check": "agent/skill-read", "params": {"expected": true}}
+      ]
+    }
+  },
+  "evaluateOptions": {"maxConcurrency": 1},
+  "tests": "file://cases.json"
+}
