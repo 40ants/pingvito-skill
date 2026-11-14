@@ -8,7 +8,7 @@
                 #:write-text #:unique-id #:run-command #:remove-directory)
   (:import-from #:pingvito-evals/mock #:start-mock #:stop-mock)
   (:export #:fixture-home #:preflight #:prepare #:codex-config #:opencode-config
-           #:workspace-instructions #:finalize))
+           #:workspace-instructions #:finalize #:*answer-delay*))
 (in-package #:pingvito-evals/environment)
 
 ;; The framework prepares every case×agent×variant up front (runner.lisp
@@ -30,6 +30,14 @@
 
 ;; Mirrors 40ants-ai-evals/util: SBCL's sb-posix provides our own pid.
 (eval-when (:compile-toplevel :load-toplevel :execute) (require :sb-posix))
+
+(defparameter *answer-delay* 180
+  "Wall-clock seconds the mock holds a served answer after each /ask.
+
+Every run passes this to the shared mock uniformly, so ask-waiting samples
+grade real patience — sleeping between polls long enough for a human to
+answer in MAX — instead of tight polling or model-latency spacing, and no
+new run-grouping restriction appears alongside failNotify.")
 
 (-> fixture-home (&optional (or null pathname)) pathname)
 (defun fixture-home (&optional project-root)
@@ -170,7 +178,8 @@ exec \"${SKILL_EVAL_SHELL:-/bin/zsh}\" \"$@\"~%"
           "pid" (field state "pid")
           "logPath" (field state "logPath")
           "token" token
-          "failNotify" (bool (true-p (field state "failNotify"))))))
+          "failNotify" (bool (true-p (field state "failNotify")))
+          "answerDelay" (field state "answerDelay"))))
 
 (-> start-shared-mock (boolean) hash-table)
 (defun start-shared-mock (fail-notify)
@@ -187,12 +196,14 @@ exec \"${SKILL_EVAL_SHELL:-/bin/zsh}\" \"$@\"~%"
     (unwind-protect
          (progn
            (setf mock (start-mock :log-path log-path :ready-path ready-path
-                                  :fail-notify fail-notify))
+                                  :fail-notify fail-notify
+                                  :answer-delay *answer-delay*))
            (let ((token (concatenate 'string "evals-" (unique-id))))
              (write-config (field mock "port") token)
              (write-text (offset-path (fixture-home)) "0")
              (write-json (state-path)
                          (dict "failNotify" (bool fail-notify)
+                               "answerDelay" *answer-delay*
                                "port" (field mock "port")
                                "pid" (field mock "pid")
                                "token" token
@@ -205,7 +216,8 @@ exec \"${SKILL_EVAL_SHELL:-/bin/zsh}\" \"$@\"~%"
                          "pid" (field mock "pid")
                          "logPath" (namestring log-path)
                          "token" token
-                         "failNotify" (bool fail-notify)))))
+                         "failNotify" (bool fail-notify)
+                         "answerDelay" *answer-delay*))))
       (unless descriptor
         (when mock (stop-mock (field mock "pid")))
         (when (probe-file (state-path)) (delete-file (state-path)))))
@@ -455,6 +467,7 @@ graded sample — so a workspace must keep its window across finalizes."
                               "pid" (field descriptor "pid")
                               "token" (field descriptor "token")
                               "failNotify" (bool (true-p (field descriptor "failNotify")))
+                              "answerDelay" (field descriptor "answerDelay")
                               "logPath" (namestring log-path)
                               "offsetStart" from
                               "offsetEnd" to)))

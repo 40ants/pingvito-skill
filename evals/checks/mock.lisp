@@ -20,9 +20,10 @@
   "Return the fixture server shipped inside the consuming project."
   (at (root) "evals/fixtures/mock_server.py"))
 
-(-> start-mock (&key (:log-path pathname) (:ready-path pathname) (:fail-notify t))
+(-> start-mock (&key (:log-path pathname) (:ready-path pathname) (:fail-notify t)
+                   (:answer-delay real))
     (values hash-table &optional))
-(defun start-mock (&key log-path ready-path fail-notify)
+(defun start-mock (&key log-path ready-path fail-notify answer-delay)
   "Start mock_server.py and wait until it publishes its ready file.
 
 The ready file carries the authoritative pid and port; the server's own
@@ -35,7 +36,10 @@ output goes to a log file beside LOG-PATH."
          (argv (append (list "python3" (namestring (mock-script))
                              "--log" (namestring log-path)
                              "--ready" (namestring ready-path))
-                       (when fail-notify (list "--fail-notify"))))
+                       (when fail-notify (list "--fail-notify"))
+                       (when (and answer-delay (plusp answer-delay))
+                         (list "--answer-delay"
+                               (format nil "~F" (coerce answer-delay 'double-float))))))
          (process nil)
          (descriptor nil))
     (unwind-protect

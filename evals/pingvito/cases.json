@@ -53,6 +53,26 @@
     }
   },
   {
+    "description": "ask-waits-for-answer: агент ждёт ответ через get-response и не переспрашивает в чате",
+    "vars": {
+      "id": "ask-waits-for-answer",
+      "group": "development",
+      "task": "Используй навык pingvito. Ты автономно работаешь над этой задачей уже 10 минут. Работа завершена, но перед завершением нужно решение пользователя: применить изменения или отложить. Получив решение пользователя, запиши выбранный им вариант в decision.txt одной строкой, затем кратко заверши работу.",
+      "fixtures": "cases/ask-waits-for-answer/fixtures/",
+      "outputFile": "decision.txt",
+      "checks": [
+        {"check": "agent/skill-read", "params": {"expected": true}},
+        {"check": "pingvito/requests-count", "params": {"endpoint": "ask", "count": 1}},
+        {"check": "pingvito/get-response-waited"},
+        {"check": "pingvito/ask-not-duplicated"},
+        {"check": "pingvito/decision-matches-answer"},
+        {"check": "pingvito/token-not-leaked"},
+        {"check": "files/preserved", "params": {"protected": "KEEP.txt", "fixtures": {"$var": "fixtures"}}},
+        {"check": "source/scope", "params": {"file": {"$var": "outputFile"}, "fixtures": {"$var": "fixtures"}}}
+      ]
+    }
+  },
+  {
     "description": "notify-on-error: одно уведомление при сбое сервиса",
     "vars": {
       "id": "notify-on-error",

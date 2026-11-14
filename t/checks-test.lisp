@@ -5,7 +5,9 @@
   (:import-from #:rove #:deftest #:ok #:ng)
   (:import-from #:pingvito-evals/checks
                 #:requests-count #:notify-concise #:token-not-leaked
-                #:home-override #:endpoint-parameter-p)
+                #:home-override #:endpoint-parameter-p
+                #:get-response-waited #:ask-not-duplicated
+                #:decision-matches-answer)
   (:import-from #:40ants-ai-evals/checks #:make-context #:describe-checks)
   (:import-from #:40ants-ai-evals/case-resources #:*sample-directory*)
   (:import-from #:40ants-ai-evals/util
@@ -30,16 +32,17 @@
   (encode (dict "endpoint" "/notify" "status" 200
                 "body" (dict "token" (fake-token) "text" text))))
 
-(defun ask-entry ()
-  "Return one JSONL log line for an /ask request."
+(defun ask-entry (&key (question "Готово?") (options (vector "Да" "Нет")))
+  "Return one JSONL log line for an /ask request with QUESTION and OPTIONS."
   (encode (dict "endpoint" "/ask" "status" 200
-                "body" (dict "token" (fake-token) "question" "Готово?"
-                             "options" (vector "Да" "Нет")))))
+                "body" (dict "token" (fake-token) "question" question
+                             "options" options))))
 
-(defun get-response-entry ()
-  "Return one JSONL log line for a /get-response request."
+(defun get-response-entry (&key (response (dict "status" "pending")))
+  "Return one JSONL log line for a /get-response poll that served RESPONSE."
   (encode (dict "endpoint" "/get-response" "status" 200
-                "body" (dict "token" (fake-token)))))
+                "body" (dict "token" (fake-token))
+                "response" response)))
 
 (defmacro with-evidence ((context lines sample) &body body)
   "Run BODY with *SAMPLE-DIRECTORY* at a temp dir holding LINES plus fixture.json.
@@ -67,7 +70,16 @@ synthetic graded sample behind the resulting CONTEXT."
     ;; The conciseness limit defaults to 240 characters.
     (ok (equal 240 (field schemas "pingvito/notify-concise" "defaults" "maxLength")))
     (ok (gethash "pingvito/token-not-leaked" schemas))
-    (ok (gethash "pingvito/home-override" schemas)))
+    (ok (gethash "pingvito/home-override" schemas))
+    (ok (equal "integer"
+               (field schemas "pingvito/get-response-waited" "parameters" "minAfterAsk")))
+    (ok (equal 1
+               (field schemas "pingvito/get-response-waited" "defaults" "minAfterAsk")))
+    (ok (gethash "pingvito/ask-not-duplicated" schemas))
+    (ok (equal "string"
+               (field schemas "pingvito/decision-matches-answer" "parameters" "file")))
+    (ok (equal "decision.txt"
+               (field schemas "pingvito/decision-matches-answer" "defaults" "file"))))
   ;; The endpoint parameter accepts exactly the documented names.
   (dolist (endpoint '("notify" "ask" "get-response" "any"))
     (ok (endpoint-parameter-p (dict "endpoint" endpoint)) endpoint))
@@ -216,7 +228,10 @@ synthetic graded sample behind the resulting CONTEXT."
            (dolist (result (list (requests-count context (dict "endpoint" "any" "count" 1))
                                  (notify-concise context (dict "maxLength" 240))
                                  (token-not-leaked context (dict))
-                                 (home-override context (dict))))
+                                 (home-override context (dict))
+                                 (get-response-waited context (dict))
+                                 (ask-not-duplicated context (dict))
+                                 (decision-matches-answer context (dict))))
              (ok (eq 'yason:false (field result "pass")))
              (ok (equal "mock evidence missing" (field result "reason")))))
       (remove-directory directory)))
@@ -226,3 +241,180 @@ synthetic graded sample behind the resulting CONTEXT."
     (ok (equal "mock evidence missing"
                (field (requests-count context (dict "endpoint" "any" "count" 0))
                       "reason")))))
+
+(deftest get-response-waited-grades-polling-after-the-ask
+  ;; A full wait: pending polls after the ask ending in a served result.
+  (with-evidence (context
+                  (list (ask-entry)
+                        (get-response-entry)
+                        (get-response-entry)
+                        (get-response-entry :response (dict "result" "Нет")))
+                  (clean-sample))
+    (ok (eq 'yason:true
+            (field (get-response-waited context (dict)) "pass"))))
+  ;; Polls before the ask do not count.
+  (with-evidence (context
+                  (list (get-response-entry)
+                        (ask-entry))
+                  (clean-sample))
+    (let ((result (get-response-waited context (dict))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "after the last /ask" (field result "reason")))))
+  ;; The last poll after the ask is still pending.
+  (with-evidence (context
+                  (list (ask-entry)
+                        (get-response-entry)
+                        (get-response-entry))
+                  (clean-sample))
+    (let ((result (get-response-waited context (dict))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "pending" (field result "reason")))))
+  ;; Old evidence without served payloads cannot prove the wait.
+  (with-evidence (context
+                  (list (ask-entry)
+                        (encode (dict "endpoint" "/get-response" "status" 200
+                                      "body" (dict "token" (fake-token)))))
+                  (clean-sample))
+    (let ((result (get-response-waited context (dict))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "pending" (field result "reason")))))
+  ;; No ask at all fails naming the ask.
+  (with-evidence (context (list (get-response-entry)) (clean-sample))
+    (let ((result (get-response-waited context (dict))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "no /ask" (field result "reason")))))
+  ;; minAfterAsk raises the bar: one answered poll is not two.
+  (with-evidence (context
+                  (list (ask-entry)
+                        (get-response-entry :response (dict "result" "Нет")))
+                  (clean-sample))
+    (let ((result (get-response-waited context (dict "minAfterAsk" 2))))
+      (ok (eq 'yason:false (field result "pass")))
+      (ok (search "after the last /ask" (field result "reason"))))))
+
+(deftest ask-not-duplicated-judges-the-final-answer
+  (flet ((sample-with-final (final)
+           (dict "files" (dict) "final" final "toolCalls" (vector))))
+    ;; A clean final report passes even when it names the chosen option.
+    (with-evidence (context (list (ask-entry))
+                            (sample-with-final "Пользователь выбрал «Нет»."))
+      (ok (eq 'yason:true
+              (field (ask-not-duplicated context (dict)) "pass"))))
+    ;; A report quoting the asked question passes when it also reports the
+    ;; answer the polls served — quoting is reporting, not re-asking.
+    (with-evidence (context
+                    (list (ask-entry :question "Работа завершена. Применить изменения?"
+                                     :options (vector "Применить" "Отложить"))
+                          (get-response-entry)
+                          (get-response-entry)
+                          (get-response-entry :response (dict "result" "Отложить")))
+                    (sample-with-final
+                      (format nil "Отправил вопрос: «Работа завершена. Применить изменения?» ~
+                                   с кнопками «Применить» / «Отложить». Пользователь выбрал «Отложить».")))
+      (ok (eq 'yason:true
+              (field (ask-not-duplicated context (dict)) "pass"))))
+    ;; Restating the question without any served answer fails, punctuation
+    ;; drift in the restate aside.
+    (with-evidence (context (list (ask-entry))
+                            (sample-with-final "Готово?  жду вашего решения"))
+      (let ((result (ask-not-duplicated context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "re-asks" (field result "reason")))))
+    ;; Restating the question fails even though earlier polls served a
+    ;; result the final never reports.
+    (with-evidence (context
+                    (list (ask-entry)
+                          (get-response-entry :response (dict "result" "Нет")))
+                    (sample-with-final "Готово?  жду вашего решения"))
+      (ok (eq 'yason:false
+              (field (ask-not-duplicated context (dict)) "pass"))))
+    ;; No ask in the log fails naming the ask.
+    (with-evidence (context nil (sample-with-final "Работа завершена."))
+      (let ((result (ask-not-duplicated context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "no /ask" (field result "reason")))))
+    ;; An ask without question text cannot be judged and fails.
+    (with-evidence (context
+                    (list (encode (dict "endpoint" "/ask" "status" 200
+                                        "body" (dict "token" (fake-token)
+                                                     "options" (vector "Да" "Нет")))))
+                    (sample-with-final "Готово?"))
+      (let ((result (ask-not-duplicated context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "question" (field result "reason")))))
+    ;; A whitespace-only question is as good as none.
+    (with-evidence (context
+                    (list (ask-entry :question "   "))
+                    (sample-with-final "Работа завершена."))
+      (let ((result (ask-not-duplicated context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "question" (field result "reason")))))))
+
+(deftest decision-matches-answer-compares-decision-file-with-served-result
+  (flet ((sample-with-decision (text)
+           (dict "files" (dict "decision.txt" text)
+                 "final" "Работа завершена." "toolCalls" (vector))))
+    ;; Quoting the served option passes, case and punctuation aside.
+    (with-evidence (context
+                    (list (ask-entry :question "Применить изменения?"
+                                     :options (vector "Применить" "Отложить"))
+                          (get-response-entry)
+                          (get-response-entry)
+                          (get-response-entry :response (dict "result" "отложить")))
+                    (sample-with-decision
+                      (concatenate 'string "«Отложить»." (string #\Newline))))
+      (ok (eq 'yason:true
+              (field (decision-matches-answer context (dict)) "pass"))))
+    ;; A multi-word option matches as a whole phrase.
+    (with-evidence (context
+                    (list (ask-entry :question "Что делаем?"
+                                     :options (vector "Применить изменения" "Отложить"))
+                          (get-response-entry :response (dict "result" "Применить изменения")))
+                    (sample-with-decision "Выбран вариант: применить изменения"))
+      (ok (eq 'yason:true
+              (field (decision-matches-answer context (dict)) "pass"))))
+    ;; The option must appear as whole words: a short option hidden inside
+    ;; other words does not count.
+    (with-evidence (context
+                    (list (ask-entry :options (vector "До свидания" "Да"))
+                          (get-response-entry :response (dict "result" "Да")))
+                    (sample-with-decision "до свидания"))
+      (let ((result (decision-matches-answer context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "does not quote" (field result "reason")))))
+    ;; Naming the other option fails.
+    (with-evidence (context
+                    (list (ask-entry :question "Применить изменения?"
+                                     :options (vector "Применить" "Отложить"))
+                          (get-response-entry :response (dict "result" "Отложить")))
+                    (sample-with-decision "Применить"))
+      (let ((result (decision-matches-answer context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "does not quote" (field result "reason")))))
+    ;; No served result fails naming the wait.
+    (with-evidence (context
+                    (list (ask-entry)
+                          (get-response-entry))
+                    (sample-with-decision "Отложить"))
+      (let ((result (decision-matches-answer context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "served a result" (field result "reason")))))
+    ;; A missing decision file fails naming the file.
+    (with-evidence (context
+                    (list (ask-entry)
+                          (get-response-entry :response (dict "result" "Нет")))
+                    (clean-sample))
+      (let ((result (decision-matches-answer context (dict))))
+        (ok (eq 'yason:false (field result "pass")))
+        (ok (search "decision.txt" (field result "reason")))))
+    ;; The file parameter names a different deliverable.
+    (let ((sample (dict "files" (dict "choice.txt" "Отложить")
+                       "final" "Работа завершена." "toolCalls" (vector))))
+      (with-evidence (context
+                      (list (ask-entry)
+                            (get-response-entry :response (dict "result" "Нет")))
+                      sample)
+        (let ((result (decision-matches-answer context (dict "file" "choice.txt"))))
+          (ok (eq 'yason:false (field result "pass")))
+          (ok (search "choice.txt" (field result "reason"))))))))
+
