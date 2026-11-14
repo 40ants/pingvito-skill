@@ -258,7 +258,15 @@ the baseline runs recorded below.
   failures, zero timeouts. Every sample waited with the recipe's
   sleep-polling loop (several copy the `for attempt in $(seq 1 20)`
   form verbatim), so the RED→GREEN pair validates both the eval's
-  sensitivity and the recipe.
+  sensitivity and the recipe. Compare a8d21d→5012e6: codex with-skill
+  1/3→3/3 (median 189k→252k tokens, 151s→221s — the price of really
+  waiting); opencode 2/3→3/3 and cheaper (70k→41k tokens, 5.5→2 commands:
+  one loop call replaces a series of polls).
+- Flash model, run `2026-11-14T17-57-29-922816Z-5b37f7`
+  (skill-fix-ask-flash, OpenCode pinned to zai-coding-plan/glm-5.3-flash
+  via --model — incompatible with --agent all, so opencode-only): 3/3
+  passed, and every sample used the recipe's loop. compare refuses
+  model-mismatched pairs without --allow-mismatch, as designed.
 - Ablation leakiness: the workspace ships the repository copy, so
   `.apm/skills/pingvito/` and the AGENTS.md announcement ("Pingvito
   настроен") remain reachable without the installed skill; two of six
