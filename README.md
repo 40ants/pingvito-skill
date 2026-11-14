@@ -163,3 +163,64 @@ python3 -m unittest discover -s tests -v
 
 Тесты используют временные конфиги и локальный HTTP-сервер. Они не отправляют
 сообщения в MAX. Требования и результаты проверки находятся в `specs/`.
+
+## Оценка навыка (evals)
+
+Помимо юнит-тестов навык проверяется прогонами реальных агентов через
+[40ants-ai-evals](https://github.com/40ants/ai-evals). Набор `pingvito`
+проверяет, что после автономной работы дольше пяти минут агент отправляет
+ровно одно краткое уведомление, что при короткой работе он молчит, что навык
+переживает отказ сервиса (отдельная holdout-задача), что токен не попадает
+в ответы и файлы, и что агент работает в изолированном `HOME`.
+
+Прогоны полностью изолированы: все запросы Pingvito принимает локальный
+mock-сервер на 127.0.0.1 с одноразовым фейковым токеном, сообщения в MAX
+не отправляются, реальный `~/.config/pingvito` не используется. На прогон
+работает один общий mock, а каждому сэмплу достаются только его строки
+лога запросов.
+
+Подготовка и обзор:
+
+```sh
+nix-shell
+qlot install
+ai-evals suites
+ai-evals checks --suite pingvito
+```
+
+Прогон задач (платные вызовы моделей):
+
+```sh
+# задачи разработки, оба агента
+ai-evals run --suite pingvito --agent all --label baseline
+
+# одна задача, повторы и абляция (те же повторы без навыка)
+ai-evals run --suite pingvito --filter notify-long-task \
+  --agent codex --repeat 3 --ablation --label baseline-notify-codex
+
+# holdout-задача — только отдельным прогоном (см. ниже)
+ai-evals run --suite pingvito --group holdout --agent codex --label smoke-error
+```
+
+Результаты:
+
+```sh
+ai-evals history --suite pingvito   # список прогонов
+ai-evals view                       # сводка по последнему прогону
+ai-evals compare RUN1 RUN2 --suite pingvito --agent codex
+ai-evals replay latest              # повторная оценка офлайн, без вызовов моделей
+```
+
+Codex использует существующий `~/.codex/auth.json`. Для OpenCode нужен ключ
+zai-coding-plan в `~/.local/share/opencode/auth.json`.
+
+Ограничение: смешивать обычный режим и режим отказов (`failNotify`) в одном
+прогоне нельзя — общий mock обслуживает только один режим, и запуск
+`--group all` завершится ошибкой. Holdout-задача `notify-on-error`
+запускается отдельно: `--group holdout` или `--group all --filter
+notify-on-error` (по одной задаче за прогон).
+
+Артефакты прогонов — `.evals/`, `.eval-cache/` и `.qlot/` — в Git не
+попадают. После прогона остаётся один процесс mock-сервера; он безвреден:
+следующий прогон завершит его сам при подготовке, либо его можно снять
+командой `pkill -f mock_server.py`.

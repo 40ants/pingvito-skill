@@ -3,13 +3,13 @@ id: PINGVITO-SKILL-EVALS-001
 type: use-case
 parent: PINGVITO-SKILL
 title: Evaluate the Pingvito skill with 40ants-ai-evals
-status: approved
+status: implemented
 change_class: additive
 actors: [AI Assistant, Eval Runner]
 emits: [Graded eval samples]
 consumes: [Skill snapshot, Mock Pingvito requests]
 created: 2026-11-13
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 ## § Intent
@@ -74,6 +74,10 @@ profile that owns the mock service, the fixture home and evidence collection.
   in qlfile, qlfile.lock and shell.nix.
 - LOC-1: Eval assets live in this repository: evals/ plus qlfile, qlfile.lock
   and shell.nix at the root.
+- HOLDOUT-1 (2026-11-14): One run serves one mock mode; mixing normal and
+  fail-notify cases (for example --group all) aborts during prepare, so the
+  holdout case runs separately via --group holdout, or --group all with
+  --filter notify-on-error.
 
 ## § Open Questions
 
@@ -149,4 +153,42 @@ profile that owns the mock service, the fixture home and evidence collection.
 ## § Implementation Notes
 
 Gate A passed: the design was approved in review on 2026-11-13. Gates B/C
-pending implementation.
+passed on 2026-11-14 after implementation, the shared-mock fix round and
+the baseline runs recorded below.
+
+### Evidence — 2026-11-14
+
+- Offline suites green: `python3 -m unittest discover -s tests -v` — 17/17
+  tests; `qlot exec ai-evals test` — 2 test systems (environment, checks),
+  155 assertions, 0 failures.
+- Baselines (repeat 3, ablation, one case per run):
+  - `baseline-notify-codex` run `2026-11-13T23-15-45-908666Z-91be49`
+    (Codex, gpt-6-sol): with-skill 3/3 samples, every check green (10/10
+    per sample); without-skill 0/3 — exactly pingvito/requests-count and
+    pingvito/notify-concise fail (7/9), the expected ablation.
+  - `baseline-notify-opencode` run `2026-11-13T23-28-06-040548Z-9a01e4`
+    (OpenCode, zai-coding-plan glm-5.3): with-skill 3/3, without-skill 0/3.
+    A first attempt, run `2026-11-13T23-20-03-408587Z-909a98`, was
+    superseded: its with-skill samples failed requests-count and
+    notify-concise because the delta archive missed the OpenCode
+    provider's repeated finalize of one workspace; fixed by commit 66d063f
+    and re-run.
+  - `baseline-silence-codex` run `2026-11-13T23-34-12-517610Z-1aeb18` and
+    `baseline-silence-opencode` run `2026-11-13T23-36-33-725610Z-44e734`:
+    6/6 samples each, with and without the skill — short work stays silent
+    regardless of the skill, as intended.
+- Holdout `notify-on-error`: run `2026-11-13T22-49-12-647790Z-d9e5b6`
+  (label smoke-error, Codex) passed 1/1 — exactly one notify attempt
+  against the failing mock, deliverable completed.
+- Replay verified offline (TC-6): replay-lisp.json of run `44e734` regraded
+  all 6 samples with zero model calls; compare rejects runs with mismatched
+  inputs unless --allow-mismatch is passed.
+- Both agents grade (DL-5): Codex receives the fixture HOME via
+  shell_environment_policy rooted at the run's project copy (plus
+  PYTHONDONTWRITEBYTECODE); OpenCode runs through the bin/opencode-sh
+  wrapper installed inside the fixture home; the opencode-home-probe case
+  and the pingvito/home-override check guard the override.
+- Evidence mechanism: one shared mock serves the whole run; finalize gives
+  each sample only the mock log lines added since the previous sample
+  (shared offset plus per-workspace window memory; commits 7e5f008,
+  66d063f, 832f7d7).
